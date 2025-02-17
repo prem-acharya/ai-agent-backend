@@ -1,17 +1,35 @@
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+from dotenv import load_dotenv
+load_dotenv()
 
-app = FastAPI()
+from fastapi import FastAPI, Request, HTTPException
+from fastapi.responses import JSONResponse
+import uvicorn
+from src.services.chat_service import ChatService
 
-# Configure CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app = FastAPI(title="AI Chat API")
+chat_service = ChatService()
 
 @app.get("/")
 async def root():
-    return {"message": "AI Agent Backend API"}
+    return {"message": "ai agent backend is running..."}
+
+@app.post("/chat")
+async def chat_endpoint(request: Request):
+    try:
+        data = await request.json()
+        messages = data.get("messages", [])
+        agent_type = data.get("agent", None)  # Optional agent selection
+        
+        if not messages:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "No messages provided in request"}
+            )
+            
+        response_text = await chat_service.chat(messages, agent_type)
+        return {"response": response_text}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+if __name__ == "__main__":
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
