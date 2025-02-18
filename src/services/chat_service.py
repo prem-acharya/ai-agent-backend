@@ -1,6 +1,10 @@
 from typing import List, Dict
+import logging
 from src.agents.githubgpt_agent import GitHubGPTAgent
 from src.core.prompts import SystemPrompts
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 class ChatService:
     def __init__(self):
@@ -19,18 +23,18 @@ class ChatService:
             if not messages:
                 return "No messages provided."
             
-            latest_message = messages[-1].get("content", "")
-            if not latest_message:
-                return "Message content is empty."
-            
             agent_type = agent_type or self.default_agent
             agent = self.get_agent(agent_type)
             
-            # Only add system prompt if needed
+            # Debug logging for system prompt
+            system_prompt = SystemPrompts.get_prompt()
+            logger.info(f"Using {agent_type} prompt: {system_prompt[:100]}...")  # Log first 100 chars
+            
             if not messages[0].get("role") == "system":
-                system_prompt = SystemPrompts.get_prompt(agent_type)
                 messages.insert(0, {"role": "system", "content": system_prompt})
-                
-            return await agent.process_message(latest_message, messages)
+                logger.info(f"Added system prompt to messages. Total messages: {len(messages)}")
+            
+            return await agent.process_message(messages[-1].get("content", ""), messages)
         except Exception as e:
+            logger.error(f"Chat service error: {str(e)}")
             return f"Chat service error: {str(e)}"

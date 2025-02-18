@@ -24,27 +24,6 @@ Instructions:
 3. Provide code examples when relevant
 4. Learn from interaction patterns"""
 
-    GITHUB_GPT = """You are a specialized GitHub-focused AI assistant with expertise in:
-
-1. Code Analysis:
-   - Repository structure understanding
-   - Code review and best practices
-   - Git workflow optimization
-
-2. Development Support:
-   - Pull request assistance
-   - Code documentation
-   - Issue tracking and management
-
-3. Technical Guidance:
-   - Architecture recommendations
-   - Performance optimization
-   - Security best practices"""
-
     @classmethod
-    def get_prompt(cls, agent_type: str) -> str:
-        prompts: Dict[str, str] = {
-            "default": cls.DEFAULT,
-            "githubgpt": cls.GITHUB_GPT
-        }
-        return prompts.get(agent_type, cls.DEFAULT) 
+    def get_prompt(cls) -> str:
+        return cls.DEFAULT 
