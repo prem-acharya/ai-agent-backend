@@ -1,5 +1,5 @@
 import os
-from openai import OpenAI, AsyncOpenAI
+from openai import AsyncOpenAI
 from typing import List
 
 class GitHubGPTAgent:
@@ -8,27 +8,26 @@ class GitHubGPTAgent:
         if not github_token:
             raise ValueError("GITHUB_TOKEN not found in your environment.")
 
+        # Initialize client once during instantiation
         self.client = AsyncOpenAI(
             api_key=github_token,
-            base_url="https://models.inference.ai.azure.com"
+            base_url="https://models.inference.ai.azure.com",
+            timeout=30.0  # Set timeout to 30 seconds
         )
 
-    async def process_message(self, message: str) -> str:
+    async def process_message(self, message: str, messages: List[dict]) -> str:
         """Process a chat message using the GitHub GPT API."""
         try:
             response = await self.client.chat.completions.create(
                 model="gpt-4o",
-                messages=[
-                    {"role": "system", "content": "You are a helpful AI assistant powered by GitHub GPT."},
-                    {"role": "user", "content": message}
-                ],
-                temperature=1,
-                max_tokens=4096,
-                top_p=1,
+                messages=messages,
+                temperature=0.7,  # Lower temperature for faster, more focused responses
+                max_tokens=2048,  # Reduced from 4096 for faster responses
+                top_p=0.9,
+                presence_penalty=0,
+                frequency_penalty=0,
                 stream=False
             )
-            if hasattr(response.choices[0].message, 'content'):
-                return response.choices[0].message.content
-            return "No response generated"
+            return response.choices[0].message.content or "No response generated"
         except Exception as e:
             return f"Error processing message: {str(e)}" 
