@@ -22,7 +22,7 @@ class GitHubGPTAgent:
                 model="gpt-4o",
                 messages=messages,
                 temperature=0.7,  # Lower temperature for faster, more focused responses
-                max_tokens=2048,  # Reduced from 4096 for faster responses
+                max_tokens=4096,  # Reduced from 4096 for faster responses
                 top_p=0.9,
                 presence_penalty=0,
                 frequency_penalty=0,

@@ -37,7 +37,7 @@ async def chat_endpoint(request: Request):
             )
             
         response_text = await chat_service.chat(messages, agent_type)
-        return {"response": response_text}
+        return {"data": response_text}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
