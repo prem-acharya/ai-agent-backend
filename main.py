@@ -6,6 +6,7 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 from src.services.chat_service import ChatService
+from pydantic import BaseModel
 
 app = FastAPI(title="AI Chat API")
 chat_service = ChatService()
@@ -18,6 +19,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+class WeatherRequest(BaseModel):
+    city: str
+    units: str = "metric"
 
 @app.get("/")
 async def root():
@@ -38,6 +43,17 @@ async def chat_endpoint(request: Request):
             
         response_text = await chat_service.chat(messages, agent_type)
         return {"data": response_text}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/weather")
+async def get_weather(request: WeatherRequest):
+    try:
+        weather_info = await chat_service.get_weather(
+            city=request.city,
+            units=request.units
+        )
+        return {"data": weather_info}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
