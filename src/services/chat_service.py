@@ -1,9 +1,8 @@
 from typing import List, Dict, Union
 import logging
 import re
-from src.ai_model.gpt40 import GitHubGPTAgent
-from src.core.prompts import SystemPrompts
-from src.ai_model.gemini import GeminiAgent
+from models.gpt40 import GitHubGPTAgent
+from models.gemini import GeminiAgent
 from src.tools.weather.weather_tool import WeatherTool
 
 logging.basicConfig(level=logging.INFO)
@@ -77,17 +76,13 @@ class ChatService:
         return {
             "response": weather_info,
             "model": model_info,
-            "agent_type": "weather agent"
+            "agent_type": "weather"
         }
 
     async def handle_regular_chat(self, messages: List[dict], agent_type: str) -> Dict[str, str]:
         """Handle regular chat messages and return responses from the agent."""
         agent_type = agent_type or self.default_agent
         agent = self.get_agent(agent_type)
-
-        system_prompt = SystemPrompts.get_prompt()
-        if not messages[0].get("role") == "system":
-            messages.insert(0, {"role": "system", "content": system_prompt})
 
         response_text = await agent.process_message(messages[-1].get("content", ""), messages)
         model_info = self.get_model_info()
