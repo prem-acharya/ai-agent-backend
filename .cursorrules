@@ -1,0 +1,125 @@
+### Project Overview: AI Automation Assistant
+A FastAPI-based backend system that creates an AI agent capable of interacting with various services and automating tasks using LangChain and other tools.
+
+### Technology Stack
+- **Backend**: Python 3.9+
+- **Framework**: FastAPI
+- **AI/LLM Integration**: LangChain, LangSmith, LangGraph
+- **API Clients**: Various service-specific SDKs
+
+### Core Components Structure
+
+1. **Base Agent Architecture**
+```
+src/
+├── ai_model/         # AI model implementations
+├── tools/            # Integration tools
+├── services/         # Business logic services
+├── core/            # Core functionalities
+└── api/             # API endpoints
+```
+
+### Implementation Plan
+
+1. **Core Agent Framework**
+- Extend the existing ChatService (reference: `src/services/chat_service.py`)
+- Implement tool-specific agents using LangChain tools
+- Use LangGraph for complex workflow orchestration
+
+2. **Tool Integrations**
+Create separate modules for each service:
+```python
+src/tools/
+├── calendar/        # Google Calendar integration
+├── linkedin/        # LinkedIn API integration
+├── gmail/          # Gmail API integration
+├── docs/           # Google Docs integration
+└── sheets/         # Google Sheets integration
+```
+
+3. **Optimization Strategies**
+- Implement connection pooling for API clients
+- Use async operations for I/O-bound tasks
+- Cache frequently used data
+- Implement rate limiting for API calls
+- Use connection pooling for database operations
+
+4. **Memory Management**
+- Implement session-based memory management
+- Use streaming responses for large data
+- Implement garbage collection for temporary data
+- Use connection pooling for external services
+
+### Integration Points
+
+1. **Google Workspace Integration**
+- OAuth2 authentication
+- Calendar event management
+- Email automation
+- Document creation/editing
+- Spreadsheet manipulation
+
+2. **LinkedIn Integration**
+- Authentication
+- Post creation/scheduling
+- Connection management
+- Analytics tracking
+
+### Optimization Guidelines
+
+1. **Code Optimization**
+- Use type hints for better code quality
+- Implement proper error handling
+- Use dependency injection
+- Follow SOLID principles
+
+2. **Performance Optimization**
+- Implement caching strategies
+- Use connection pooling
+- Implement rate limiting
+- Use async operations where possible
+
+3. **Memory Optimization**
+- Use generators for large datasets
+- Implement proper cleanup
+- Use streaming responses
+- Implement memory limits
+
+### Security Considerations
+- Implement proper API key management
+- Use environment variables for sensitive data
+- Implement rate limiting
+- Use proper authentication/authorization
+
+### Development Workflow
+1. Set up development environment
+2. Implement core functionality
+3. Add tool integrations
+4. Implement optimization strategies
+5. Add monitoring and logging
+6. Implement security measures
+7. Add tests and documentation
+
+This plan provides a structured approach to building your AI agent system while maintaining code quality, performance, and security. The existing codebase can be extended using these guidelines to create a robust automation system.
+
+Remember to implement proper error handling, logging, and monitoring throughout the system to ensure reliable operation and easy maintenance.
+
+### Build an Agent
+
+By themselves, language models can't take actions - they just output text. A big use case for LangChain is creating agents. Agents are systems that use LLMs as reasoning engines to determine which actions to take and the inputs necessary to perform the action. After executing actions, the results can be fed back into the LLM to determine whether more actions are needed, or whether it is okay to finish. This is often achieved via tool-calling.
+
+In this tutorial we will build an agent that can interact with a search engine. You will be able to ask this agent questions, watch it call the search tool, and have conversations with it.
+
+
+### dependencies
+
+python-dotenv==1.0.0
+httpx==0.26.0
+fastapi==0.115.8
+langchain-community==0.3.18
+langchain==0.3.19
+langchain-core==0.3.39
+openai==1.64.0
+pydantic-settings==2.8.0
+uvicorn==0.34.0
+langchain-openai==0.3.7
