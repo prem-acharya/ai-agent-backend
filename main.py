@@ -43,7 +43,7 @@ app.include_router(chat.router, prefix="/api/v1", tags=["chat"])
 @app.get("/")
 async def root():
     """Health check endpoint"""
-    return {"status": "running", "message": "AI Agent is running", "environment": "development"}
+    return {"status": "running", "message": "AI Agent is running", "environment": "development", "version": "1.0.0"}
 
 
 if __name__ == "__main__":

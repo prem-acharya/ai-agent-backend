@@ -1,7 +1,10 @@
-from langchain.agents import agent_types, initialize_agent, AgentType
+from langchain.agents import initialize_agent, AgentType
 from langchain_openai import AzureChatOpenAI
 from src.tools.weather.weather_tool import WeatherTool
+from src.tools.aboutme_tool import AboutMeTool
 import os
+
+# print(os.getenv("AZURE_OPENAI_API_KEY"))
 
 class GitHubGPTAgent:
 
@@ -14,30 +17,32 @@ class GitHubGPTAgent:
             api_version="2024-02-15-preview",
             temperature=0.7)
 
-        self.tools = [WeatherTool()]
+        self.tools = [WeatherTool(), AboutMeTool()]
 
         self.agent = initialize_agent(
             tools=self.tools,
             llm=self.llm,
-            agent=AgentType.ZERO_SHOT_REACT_DESCRIPTION,
+            agent=AgentType.OPENAI_FUNCTIONS, # ✅ Multi-tool support also works with gemini
+            # agent=AgentType.STRUCTURED_CHAT_ZERO_SHOT_REACT_DESCRIPTION, ✅ Multi-tool support also works with gemini
             verbose=True)
 
     async def run(self, query: str) -> dict:
         try:
             result = await self.agent.arun(query)
 
+            # Initialize used_tools list
+            used_tools = []
+
             # Check if weather information is present in the response
-            weather_indicators = [
-                "temperature", "humidity", "wind", "visibility", "weather",
-                "forecast"
-            ]
-            is_weather_used = any(indicator in result.lower()
-                                  for indicator in weather_indicators)
+            if "temperature" in result.lower() or "weather" in result.lower():
+                used_tools.append("weather_tool")
+            if "full-stack developer" in result.lower():
+                used_tools.append("about_me")
 
             return {
                 "response": result,
                 "error": None,
-                "agent": "weather" if is_weather_used else "",
+                "agent": ", ".join(used_tools) if used_tools else "none",
                 "model": self.llm.deployment_name
             }
         except Exception as e:
