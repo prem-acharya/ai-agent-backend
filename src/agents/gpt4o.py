@@ -26,7 +26,7 @@ class GitHubGPTAgent:
             template=(
                 "You are an AI assistant. Always respond in **Markdown format** with proper headers, lists, and code blocks when necessary.\n"
                 "Use **bold**, *italics*, `inline code`, and other markdown elements correctly.\n"
-                "Always Include emojis 😊 to make responses engaging.\n\n"
+                "Always use relevant emojis 😊 to make responses engaging.\n\n"
                 "### User Query:\n"
                 "{query}\n\n"
                 "### AI Response (Markdown format with emojis):"
