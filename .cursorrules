@@ -123,3 +123,57 @@ openai==1.64.0
 pydantic-settings==2.8.0
 uvicorn==0.34.0
 langchain-openai==0.3.7
+
+
+
+
+#gemini 
+
+from langchain.agents import initialize_agent, AgentType
+from langchain_google_genai import ChatGoogleGenerativeAI
+from src.tools.weather.weather_tool import WeatherTool
+from src.tools.about_me_tool import AboutMeTool
+import os
+
+class GeminiAgent:
+    def __init__(self):
+        self.llm = ChatGoogleGenerativeAI(
+            model="gemini-1.5-flash",  # ✅ Use Gemini Flash
+            google_api_key=os.getenv("GOOGLE_API_KEY"),
+            temperature=0.7
+        )
+
+        self.tools = [WeatherTool(), AboutMeTool()]  # ✅ Multi-tool support
+
+        self.agent = initialize_agent(
+            tools=self.tools,
+            llm=self.llm,
+            agent=AgentType.OPENAI_FUNCTIONS,  # ✅ Works for Gemini function calling
+            verbose=True
+        )
+
+    async def run(self, query: str) -> dict:
+        try:
+            result = await self.agent.arun(query)
+            
+            # Detect tools used
+            used_tools = []
+            if "temperature" in result.lower() or "weather" in result.lower():
+                used_tools.append("weather")
+            if "software developer" in result.lower():
+                used_tools.append("about_me")
+
+            return {
+                "response": result,
+                "error": None,
+                "agent": ", ".join(used_tools),  # ✅ Show multiple agents used
+                "model": "gemini-1.5-flash"
+            }
+        except Exception as e:
+            return {
+                "response": f"Error running agent: {str(e)}",
+                "error": str(e),
+                "agent": "",
+                "model": "gemini-1.5-flash"
+            }
+
