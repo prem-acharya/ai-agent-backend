@@ -2,7 +2,6 @@ from fastapi import APIRouter, HTTPException, Request, status
 from src.models import ChatRequest, ChatResponse, ErrorResponse
 from src.agents.gpt4o import GitHubGPTAgent
 import logging
-from typing import Dict, List
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -36,21 +35,27 @@ async def chat(request: ChatRequest) -> ChatResponse:
     """
     try:
         logger.info("Processing chat request")
+
+        # extract messages from request
         messages = [msg.dict() for msg in request.messages]
+        if not messages:
+            raise ValueError("No messages provided in request")
 
-        # Use default values if None is provided
-        temperature = request.temperature if request.temperature is not None else 0.7
-        max_tokens = request.max_tokens if request.max_tokens is not None else 4096
-
-        logger.info(f"Processing chat with {len(messages)} messages")
-        # Get the last message content
         user_message = messages[-1]["content"]
+        websearch = request.websearch if request.websearch is not None else False
+
+        logger.info(f"User message: {user_message}, Web Search: {websearch}")
         
-        # Use agent service to process the message
-        result = await agent_service.run(user_message)
+        # call AI agent
+        result = await agent_service.run(user_message, websearch)
+
+        # check if result is a dictionary before unpacking
+        if not isinstance(result, dict):
+            raise ValueError("Invalid response format from AI agent")
 
         logger.info("Successfully generated chat response")
         return ChatResponse(**result)
+    
     except ValueError as e:
         logger.error(f"Validation error: {str(e)}")
         raise HTTPException(

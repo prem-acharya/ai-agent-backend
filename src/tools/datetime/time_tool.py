@@ -22,14 +22,17 @@ class CurrentTimeTool(BaseTool):
             timezone = timezones.get(city.lower(), "Asia/Kolkata")
             url = f"https://timeapi.io/api/Time/current/zone?timeZone={timezone}"
             response = requests.get(url)
+            response.raise_for_status()
             data = response.json()
 
             if "dateTime" in data:
                 return f"Current time in {city}: {data['dateTime']} (TimeZone: {data['timeZone']})"
             else:
                 return f"Error: {data.get('error', 'Unknown error')}"
+        except requests.exceptions.RequestException as e:
+            return f"Error: {str(e)}. Please check your network connection or try again later."
         except Exception as e:
-            return f"Error: {str(e)}"
+            return f"Error: {str(e)}. If the issue persists, please provide your location or time zone."
 
     async def _arun(self, city: str = "Kolkata") -> str:
         """Async version of fetching the current time."""
