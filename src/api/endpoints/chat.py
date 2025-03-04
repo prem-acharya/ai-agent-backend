@@ -1,7 +1,11 @@
 from fastapi import APIRouter, HTTPException, Request, status
-from src.models import ChatRequest, ChatResponse, ErrorResponse
+from fastapi.responses import StreamingResponse
+from src.models import ChatRequest, ErrorResponse
 from src.agents.gpt4o import GitHubGPTAgent
 import logging
+import json
+import asyncio
+from typing import AsyncGenerator
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -12,23 +16,22 @@ agent_service = GitHubGPTAgent()
 
 @router.post(
     "/chat",
-    response_model=ChatResponse,
     responses={
         400: {"model": ErrorResponse, "description": "Invalid request"},
         500: {"model": ErrorResponse, "description": "Server error"}
     },
-    summary="Chat with AI",
-    description="Process a chat conversation with the AI model"
+    summary="Chat with AI agent",
+    description="Process a chat conversation with the AI agent"
 )
-async def chat(request: ChatRequest) -> ChatResponse:
+async def chat(request: ChatRequest):
     """
-    Process a chat conversation with the AI model.
+    Process a chat conversation with the AI agent.
 
     Args:
         request (ChatRequest): The chat request containing messages and optional parameters
 
     Returns:
-        ChatResponse: The AI model's response
+        StreamingResponse: The AI model's response in JSON format.
 
     Raises:
         HTTPException: If there's an error processing the request
@@ -46,15 +49,18 @@ async def chat(request: ChatRequest) -> ChatResponse:
 
         logger.info(f"User message: {user_message}, Web Search: {websearch}")
         
-        # call AI agent
-        result = await agent_service.run(user_message, websearch)
-
-        # check if result is a dictionary before unpacking
-        if not isinstance(result, dict):
-            raise ValueError("Invalid response format from AI agent")
-
-        logger.info("Successfully generated chat response")
-        return ChatResponse(**result)
+        # Get streaming response generator
+        stream = await agent_service.run(user_message, websearch)
+        
+        # Return streaming response with proper content type
+        return StreamingResponse(
+            stream,
+            media_type="application/json",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+            }
+        )
     
     except ValueError as e:
         logger.error(f"Validation error: {str(e)}")
@@ -68,3 +74,15 @@ async def chat(request: ChatRequest) -> ChatResponse:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"message": "Internal server error", "code": "SERVER_ERROR"}
         )
+    
+async def stream_chat_response(query: str, websearch: bool) -> AsyncGenerator[str, None]:
+    """Stream AI-generated responses as JSON chunks."""
+    result = await agent_service.run(query, websearch)
+
+    if isinstance(result, dict) and "response" in result:
+        response_text = result["response"]
+        words = response_text.split()
+        for word in words:
+            chunk = json.dumps({"chunk": word})  # Stream each word as JSON
+            yield f"{chunk}\n"
+            await asyncio.sleep(0.1)
