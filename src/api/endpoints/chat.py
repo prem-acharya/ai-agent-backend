@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
-from src.models import ChatRequest, ErrorResponse
+from src.models import ChatRequest, ErrorResponse, AgentType
+from src.agents.gemini import GeminiAgent
 from src.agents.gpt4o import GitHubGPTAgent
 import logging
 import json
@@ -12,7 +13,8 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-agent_service = GitHubGPTAgent()
+gemini_agent = GeminiAgent()
+gpt4o_agent = GitHubGPTAgent()
 
 @router.post(
     "/chat",
@@ -37,22 +39,27 @@ async def chat(request: ChatRequest):
         HTTPException: If there's an error processing the request
     """
     try:
-        logger.info("Processing chat request")
-
-        # extract messages from request
-        messages = [msg.dict() for msg in request.messages]
-        if not messages:
+        logger.info(f"Processing chat request with agent: {request.agent_type}")
+        
+        if not request.messages:
             raise ValueError("No messages provided in request")
 
-        user_message = messages[-1]["content"]
-        websearch = request.websearch if request.websearch is not None else False
+        user_message = request.messages[-1].content
+        
+        # Select agent based on type
+        if request.agent_type == AgentType.GEMINI:
+            logger.info(f"Using Gemini agent with reasoning: {request.use_reasoning}")
+            stream = gemini_agent.run(
+                query=user_message,
+                use_reasoning=request.use_reasoning or False
+            )
+        else:
+            logger.info("Using GPT4O agent")
+            stream = gpt4o_agent.run(
+                query=user_message,
+                websearch=request.websearch or False
+            )
 
-        logger.info(f"User message: {user_message}, Web Search: {websearch}")
-        
-        # Get streaming response generator
-        stream = await agent_service.run(user_message, websearch)
-        
-        # Return streaming response with proper content type
         return StreamingResponse(
             stream,
             media_type="application/json",
@@ -61,23 +68,16 @@ async def chat(request: ChatRequest):
                 "Connection": "keep-alive",
             }
         )
-    
-    except ValueError as e:
-        logger.error(f"Validation error: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"message": str(e), "code": "VALIDATION_ERROR"}
-        )
     except Exception as e:
-        logger.error(f"Server error: {str(e)}")
+        logger.error(f"Chat endpoint error: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"message": "Internal server error", "code": "SERVER_ERROR"}
+            detail={"message": str(e), "code": "SERVER_ERROR"}
         )
     
 async def stream_chat_response(query: str, websearch: bool) -> AsyncGenerator[str, None]:
     """Stream AI-generated responses as JSON chunks."""
-    result = await agent_service.run(query, websearch)
+    result = await gpt4o_agent.run(query, websearch)
 
     if isinstance(result, dict) and "response" in result:
         response_text = result["response"]

@@ -12,3 +12,4 @@ langgraph>=0.2.56,<0.4.0
 langgraph-sdk>=0.1.53
 langgraph-checkpoint>=2.0.15,<3.0
 langchain-google-genai==2.0.11
+nest_asyncio==1.5.6

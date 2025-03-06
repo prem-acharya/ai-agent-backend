@@ -7,6 +7,7 @@ from src.tools.datetime.time_tool import CurrentTimeTool
 from src.tools.websearch.websearch_tool import WebSearchTool
 import os
 import time
+import json
 
 class GitHubGPTAgent:
     def __init__(self):
@@ -36,17 +37,15 @@ class GitHubGPTAgent:
         )
 
     async def run(self, query: str, websearch: bool = False, city: str = "Kolkata") -> dict:
-        """Runs the AI agent with optional web search support."""
+        """Runs the AI agent with optional web search support and includes response metadata."""
         tools = self.base_tools.copy()
         formatted_prompt = self.prompt_template.format(query=query)
-        current_time ,current_date = "", ""
+        current_time, current_date = "", ""
 
         # First, get the current date and time
         time_tool = CurrentTimeTool()
-        current_time_response = time_tool._run(city)  # Fetch current time
-
         try:
-            time_response = CurrentTimeTool()._run(city)
+            time_response = time_tool._run(city)
             time_parts = time_response.split(": ", 1)[-1].strip()
             if "T" in time_parts:
                 current_date, time_part = time_parts.split("T", 1)
@@ -62,22 +61,44 @@ class GitHubGPTAgent:
             tools=tools,
             llm=self.llm,
             agent=AgentType.OPENAI_FUNCTIONS,
-            
             verbose=True
         )
 
         async def stream_response():
-            """Generator to stream AI response in real time."""
+            """Generator to stream AI response in real time with metadata."""
+            start_time = time.time()
+            collected_response = ""
             try:
                 async for chunk in agent.astream(formatted_prompt):
-                    # Convert the chunk to string if it's a dictionary
+                    # Ensure the chunk is a string
                     if hasattr(chunk, 'content'):
-                        yield chunk.content
+                        chunk_str = chunk.content
                     elif isinstance(chunk, dict):
-                        yield str(chunk.get('content', str(chunk)))
+                        chunk_str = str(chunk.get('content', str(chunk)))
                     else:
-                        yield str(chunk)
+                        chunk_str = str(chunk)
+                    collected_response += chunk_str
+                    yield chunk_str
+
+                # Calculate processing time
+                processing_time = time.time() - start_time
+
+                # Get token usage if available; fallback to "N/A"
+                token_usage = getattr(self.llm, "last_token_usage", "N/A")
+
+                # Prepare metadata
+                metadata = {
+                    "Model Information": self.llm.model_name,
+                    "Tool Usage": [tool.__class__.__name__ for tool in tools],
+                    "Token Usage": token_usage,
+                    "Processing Time": processing_time
+                }
+
+                # Yield the metadata as a final JSON chunk
+                metadata_chunk = "\n\n---METADATA---\n" + json.dumps(metadata) + "\n"
+                yield metadata_chunk
+
             except Exception as e:
                 yield f"⚠️ **Error running agent:** `{str(e)}`"
 
-        return stream_response() # Returns a generator for streaming
+        return stream_response()  # Returns a generator for streaming
