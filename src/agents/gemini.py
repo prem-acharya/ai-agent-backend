@@ -35,7 +35,7 @@ class GeminiAgent:
             google_api_key=api_key,
             streaming=True,
             temperature=0.3,
-            max_output_tokens=1024,
+            max_output_tokens=4096,
             top_k=40,
             top_p=0.9,
             callbacks=[StreamingStdOutCallbackHandler()]
@@ -86,16 +86,15 @@ class GeminiAgent:
     async def run(
         self, 
         query: str, 
-        use_reasoning: bool = False
+        reasoning: bool = False
     ) -> AsyncGenerator[str, None]:
         try:
-            if use_reasoning:
+            if reasoning:
                 # First, get the reasoning
                 reasoning_text = ""
                 yield json.dumps({
                     "type": "start",
                     "mode": "reasoning",
-                    "agent": "gemini",
                     "model": "gemini-2.0-flash"
                 }) + "\n"
 
@@ -120,7 +119,6 @@ class GeminiAgent:
                 yield json.dumps({
                     "type": "start",
                     "mode": "answer",
-                    "agent": "gemini",
                     "model": "gemini-2.0-flash"
                 }) + "\n"
 
@@ -131,13 +129,11 @@ class GeminiAgent:
                         "type": "content",
                         "mode": "answer",
                         "text": text,
-                        "agent": "gemini"
                     }) + "\n"
 
                 yield json.dumps({
                     "type": "end",
                     "mode": "answer",
-                    "agent": "gemini"
                 }) + "\n"
 
             else:
@@ -145,7 +141,6 @@ class GeminiAgent:
                 yield json.dumps({
                     "type": "start",
                     "mode": "direct",
-                    "agent": "gemini",
                     "model": "gemini-2.0-flash"
                 }) + "\n"
 
@@ -156,13 +151,11 @@ class GeminiAgent:
                         "type": "content",
                         "mode": "direct",
                         "text": text,
-                        "agent": "gemini"
                     }) + "\n"
 
                 yield json.dumps({
                     "type": "end",
                     "mode": "direct",
-                    "agent": "gemini"
                 }) + "\n"
 
         except Exception as e:
@@ -170,6 +163,5 @@ class GeminiAgent:
             yield json.dumps({
                 "type": "error",
                 "error": str(e),
-                "agent": "gemini",
                 "model": "gemini-2.0-flash"
             }) + "\n"

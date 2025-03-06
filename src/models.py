@@ -23,10 +23,9 @@ class AgentType(str, Enum):
 
 class ChatRequest(BaseModel):
     messages: List[Message] = Field(..., min_items=1, description="List of messages in the conversation")
-    max_tokens: Optional[int] = Field(4096, ge=1, le=8192, description="Maximum tokens in the response")
     websearch: Optional[bool] = Field(False, description="Enable web search")
-    use_reasoning: Optional[bool] = Field(False, description="Enable chain-of-thought reasoning")
-    agent_type: Optional[AgentType] = Field(AgentType.GEMINI, description="Type of AI agent to use")
+    reasoning: Optional[bool] = Field(False, description="Enable chain-of-thought reasoning")
+    model: Optional[AgentType] = Field(AgentType.GEMINI, description="Type of AI agent to use")
 
 class ChatResponse(BaseModel):
     response: str = Field(..., description="The response from the AI model")

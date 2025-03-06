@@ -39,7 +39,7 @@ async def chat(request: ChatRequest):
         HTTPException: If there's an error processing the request
     """
     try:
-        logger.info(f"Processing chat request with agent: {request.agent_type}")
+        logger.info(f"Processing chat request with agent: {request.model}")
         
         if not request.messages:
             raise ValueError("No messages provided in request")
@@ -47,11 +47,11 @@ async def chat(request: ChatRequest):
         user_message = request.messages[-1].content
         
         # Select agent based on type
-        if request.agent_type == AgentType.GEMINI:
-            logger.info(f"Using Gemini agent with reasoning: {request.use_reasoning}")
+        if request.model == AgentType.GEMINI:
+            logger.info(f"Using Gemini agent with reasoning: {request.reasoning}")
             stream = gemini_agent.run(
                 query=user_message,
-                use_reasoning=request.use_reasoning or False
+                reasoning=request.reasoning or False
             )
         else:
             logger.info("Using GPT4O agent")

@@ -18,6 +18,7 @@ class GitHubGPTAgent:
             model_name="gpt-4o",
             api_version="2024-02-15-preview",
             temperature=0.7,
+            max_tokens=4096,
             streaming=True
         )
 
