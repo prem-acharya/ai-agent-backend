@@ -106,13 +106,13 @@ class GeminiAgent:
                         "type": "content",
                         "mode": "reasoning",
                         "text": text,
-                        "agent": "gemini"
+                        "model": "gemini-2.0-flash"
                     }) + "\n"
 
                 yield json.dumps({
                     "type": "end",
                     "mode": "reasoning",
-                    "agent": "gemini"
+                    "model": "gemini-2.0-flash"
                 }) + "\n"
 
                 # Then, get the final answer

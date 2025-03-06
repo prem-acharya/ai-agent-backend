@@ -8,6 +8,7 @@ from src.tools.websearch.websearch_tool import WebSearchTool
 import os
 import time
 import json
+from typing import AsyncGenerator
 
 class GitHubGPTAgent:
     def __init__(self):
@@ -37,69 +38,85 @@ class GitHubGPTAgent:
             ),
         )
 
-    async def run(self, query: str, websearch: bool = False, city: str = "Kolkata") -> dict:
-        """Runs the AI agent with optional web search support and includes response metadata."""
-        tools = self.base_tools.copy()
-        formatted_prompt = self.prompt_template.format(query=query)
-        current_time, current_date = "", ""
-
-        # First, get the current date and time
-        time_tool = CurrentTimeTool()
+    async def run(self, query: str, websearch: bool = False, city: str = "Kolkata") -> AsyncGenerator[str, None]:
+        """Runs the AI agent with optional web search support."""
         try:
-            time_response = time_tool._run(city)
-            time_parts = time_response.split(": ", 1)[-1].strip()
-            if "T" in time_parts:
-                current_date, time_part = time_parts.split("T", 1)
-                current_time = time_part.split("+")[0].strip() if "+" in time_part else time_part.strip()
-        except Exception as e:
-            print(f"⚠️ Error parsing time: {e}")
+            tools = self.base_tools.copy()
+            formatted_prompt = self.prompt_template.format(query=query)
 
-        if websearch:
-            formatted_prompt = f"{formatted_prompt} (as of {current_date}, {current_time})"
-            tools.append(WebSearchTool())
+            if websearch:
+                tools.append(WebSearchTool())
+                used_tools = ["WebSearchTool"]  # Track that the web search tool is used
+            else:
+                used_tools = []  # Initialize used_tools
 
-        agent = initialize_agent(
-            tools=tools,
-            llm=self.llm,
-            agent=AgentType.OPENAI_FUNCTIONS,
-            verbose=True
-        )
-
-        async def stream_response():
-            """Generator to stream AI response in real time with metadata."""
-            start_time = time.time()
-            collected_response = ""
+            # Get the current date and time
+            time_tool = CurrentTimeTool()
             try:
-                async for chunk in agent.astream(formatted_prompt):
-                    # Ensure the chunk is a string
-                    if hasattr(chunk, 'content'):
-                        chunk_str = chunk.content
-                    elif isinstance(chunk, dict):
-                        chunk_str = str(chunk.get('content', str(chunk)))
-                    else:
-                        chunk_str = str(chunk)
-                    collected_response += chunk_str
-                    yield chunk_str
-
-                # Calculate processing time
-                processing_time = time.time() - start_time
-
-                # Get token usage if available; fallback to "N/A"
-                token_usage = getattr(self.llm, "last_token_usage", "N/A")
-
-                # Prepare metadata
-                metadata = {
-                    "Model Information": self.llm.model_name,
-                    "Tool Usage": [tool.__class__.__name__ for tool in tools],
-                    "Token Usage": token_usage,
-                    "Processing Time": processing_time
-                }
-
-                # Yield the metadata as a final JSON chunk
-                metadata_chunk = "\n\n---METADATA---\n" + json.dumps(metadata) + "\n"
-                yield metadata_chunk
-
+                time_response = time_tool._run(city)
+                time_parts = time_response.split(": ", 1)[-1].strip()
+                if "T" in time_parts:
+                    current_date, time_part = time_parts.split("T", 1)
+                    current_time = time_part.split("+")[0].strip() if "+" in time_part else time_part.strip()
             except Exception as e:
-                yield f"⚠️ **Error running agent:** `{str(e)}`"
+                print(f"⚠️ Error parsing time: {e}")
 
-        return stream_response()  # Returns a generator for streaming
+            if websearch:
+                formatted_prompt = f"{formatted_prompt} (as of {current_date}, {current_time})"
+
+            agent = initialize_agent(
+                tools=tools,
+                llm=self.llm,
+                agent=AgentType.OPENAI_FUNCTIONS,
+                verbose=False  # Set to False to hide intermediate steps
+            )
+
+            # Signal stream start
+            yield json.dumps({
+                "type": "start",
+                "mode": "direct",
+                "model": "gpt-4o"
+            }) + "\n"
+
+            # Stream the response
+            final_response = ""
+            async for chunk in agent.astream(formatted_prompt):
+                if hasattr(chunk, 'output'):
+                    final_response = chunk.output
+                elif isinstance(chunk, dict) and 'output' in chunk:
+                    final_response = chunk['output']
+                elif isinstance(chunk, str):
+                    final_response = chunk
+
+                # Check for tools used in the response
+                if "weather" in final_response.lower() or "temperature" in final_response.lower():
+                    used_tools.append("WeatherTool")
+                if "about me" in final_response.lower() or "about you" in final_response.lower() or "about my" in final_response.lower():
+                    used_tools.append("AboutMeTool")
+                if "current time" in final_response.lower() or "current date" in final_response.lower():
+                    used_tools.append("CurrentTimeTool")
+
+                if final_response:
+                    # Only yield the final, cleaned response
+                    response_data = {
+                        "type": "content",
+                        "text": final_response,
+                        "model": "gpt-4o"
+                    }
+                    if used_tools:  # Only include used_tools if not empty
+                        response_data["used_tools"] = list(set(used_tools))
+
+                    yield json.dumps(response_data) + "\n"
+
+            # Signal stream end
+            yield json.dumps({
+                "type": "end",
+                "mode": "direct"
+            }) + "\n"
+
+        except Exception as e:
+            yield json.dumps({
+                "type": "error",
+                "error": str(e),
+                "model": "gpt-4o"
+            }) + "\n"
