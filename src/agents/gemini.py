@@ -60,7 +60,8 @@ class GeminiAgent:
         self.direct_prompt = PromptTemplate(
             input_variables=["question"],
             template=(
-                "Provide a direct, concise answer in markdown format with relevant emojis for: {question}\n\n"
+                "Provide a direct, concise answer in proper markdown format with relevant emojis for: {question}\n\n"
+                "Use **bold**, *italics*, `inline code`, and other markdown elements correctly.\n\n"
                 "Answer:"
             )
         )

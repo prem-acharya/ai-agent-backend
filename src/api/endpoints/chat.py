@@ -54,9 +54,10 @@ async def chat(request: ChatRequest):
                 reasoning=request.reasoning or False
             )
         else:
-            logger.info("Using GPT4O agent")
+            logger.info(f"Using GPT4O agent with reasoning: {request.reasoning}")
             stream = gpt4o_agent.run(
                 query=user_message,
+                reasoning=request.reasoning or False,
                 websearch=request.websearch or False
             )
 
