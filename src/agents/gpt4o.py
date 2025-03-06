@@ -21,7 +21,7 @@ class ToolTrackingCallback(BaseCallbackHandler):
 class GitHubGPTAgent:
     def __init__(self):
         self.llm = AzureChatOpenAI(
-            openai_api_key="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",
+            openai_api_key=os.getenv("OPENAI_API_KEY"),
             azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
             deployment_name="gpt-4o",
             model_name="gpt-4o",
