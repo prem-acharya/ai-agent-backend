@@ -1,89 +1,58 @@
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
-from src.models import ChatRequest, ErrorResponse, AgentType
-from src.agents.gemini import GeminiAgent
-from src.agents.gpt4o import GitHubGPTAgent
-import logging
-import json
+from typing import AsyncIterable
 import asyncio
-from typing import AsyncGenerator
-
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+import os
+from langchain.callbacks import AsyncIteratorCallbackHandler
+from langchain_openai import AzureChatOpenAI
+from langchain.schema import HumanMessage
+from pydantic import BaseModel
 
 router = APIRouter()
-gemini_agent = GeminiAgent()
-gpt4o_agent = GitHubGPTAgent()
 
-@router.post(
-    "/chat",
-    responses={
-        400: {"model": ErrorResponse, "description": "Invalid request"},
-        500: {"model": ErrorResponse, "description": "Server error"}
-    },
-    summary="Chat with AI agent",
-    description="Process a chat conversation with the AI agent"
-)
-async def chat(request: ChatRequest):
-    """
-    Process a chat conversation with the AI agent.
+class Message(BaseModel):
+    content: str
 
-    Args:
-        request (ChatRequest): The chat request containing messages and optional parameters
+async def generate_chat_response(content: str) -> AsyncIterable[str]:
+    callback = AsyncIteratorCallbackHandler()
+    model = AzureChatOpenAI(
+        openai_api_key=os.getenv("OPENAI_API_KEY"),
+        azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
+        deployment_name="gpt-4o",
+        model_name="gpt-4o",
+        api_version="2024-02-15-preview",
+        streaming=True,
+        verbose=True,
+        temperature=0.7,
+        max_tokens=4096,
+        callbacks=[callback]
+    )
 
-    Returns:
-        StreamingResponse: The AI model's response in JSON format.
+    task = asyncio.create_task(
+        model.agenerate(messages=[[HumanMessage(content=content)]])
+    )
 
-    Raises:
-        HTTPException: If there's an error processing the request
-    """
     try:
-        logger.info(f"Processing chat request with agent: {request.model}")
-        
-        if not request.messages:
-            raise ValueError("No messages provided in request")
+        async for token in callback.aiter():
+            yield token
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        callback.done.set()
 
-        user_message = request.messages[-1].content
-        
-        # Select agent based on type
-        if request.model == AgentType.GEMINI:
-            logger.info(f"Using Gemini agent with reasoning: {request.reasoning}")
-            stream = gemini_agent.run(
-                query=user_message,
-                reasoning=request.reasoning or False
-            )
-        else:
-            logger.info(f"Using GPT4O agent with reasoning: {request.reasoning}")
-            stream = gpt4o_agent.run(
-                query=user_message,
-                reasoning=request.reasoning or False,
-                websearch=request.websearch or False
-            )
+    await task
 
+@router.post("/chat")
+async def stream_chat(message: Message):
+    try:
+        generator = generate_chat_response(message.content)
         return StreamingResponse(
-            stream,
-            media_type="application/json",
+            generator, 
+            media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
                 "Connection": "keep-alive",
             }
         )
     except Exception as e:
-        logger.error(f"Chat endpoint error: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"message": str(e), "code": "SERVER_ERROR"}
-        )
-    
-async def stream_chat_response(query: str, websearch: bool) -> AsyncGenerator[str, None]:
-    """Stream AI-generated responses as JSON chunks."""
-    result = await gpt4o_agent.run(query, websearch)
-
-    if isinstance(result, dict) and "response" in result:
-        response_text = result["response"]
-        words = response_text.split()
-        for word in words:
-            chunk = json.dumps({"chunk": word})  # Stream each word as JSON
-            yield f"{chunk}\n"
-            await asyncio.sleep(0.1)
+        raise HTTPException(status_code=500, detail=str(e))
