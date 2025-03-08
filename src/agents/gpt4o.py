@@ -11,19 +11,15 @@ class GPT4OAgent(BaseStreamingLLM):
     async def generate_response(self, content: str) -> AsyncIterable[str]:
         """Generate streaming response from the model"""
         try:
-            # Create message list
             messages = [HumanMessage(content=content)]
             
-            # Create async task for model generation
             task = asyncio.create_task(
                 self.llm.agenerate(messages=[messages])
             )
 
-            # Stream tokens while model generates
             async for token in self.generate_streaming_response(messages):
                 yield token
 
-            # Wait for completion
             await task
 
         except Exception as e:
