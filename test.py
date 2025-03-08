@@ -15,9 +15,14 @@ def test_chat_endpoint(message: str, websearch: bool = False):
     }
 
     try:
+        print("\n" + "="*50)
+        print(f"🔍 Query: {message}")
+        print(f"🌐 Web Search: {'Enabled' if websearch else 'Disabled'}")
+        print("="*50 + "\n")
+        
         with requests.post(url, data=json.dumps(data), headers=headers, stream=True) as r:
             r.raise_for_status()
-            print("\nResponse streaming:")
+            print("Response streaming:")
             print("-" * 50)
             
             # Process streaming response
@@ -34,10 +39,11 @@ def test_chat_endpoint(message: str, websearch: bool = False):
             print("\n" + "-" * 50)
 
     except requests.exceptions.RequestException as e:
-        print(f"Error: {str(e)}")
+        print(f"❌ Error: {str(e)}")
 
 if __name__ == "__main__":
     
-    message = "current time in london"
+    message = "latest bollywood movies and series are released"
     
+    # Test with websearch enabled
     test_chat_endpoint(message, websearch=False)
