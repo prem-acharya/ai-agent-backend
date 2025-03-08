@@ -3,7 +3,7 @@ from fastapi.responses import StreamingResponse
 from typing import AsyncIterable
 from langchain.schema import HumanMessage, SystemMessage
 from langchain.agents import initialize_agent, AgentType
-from langchain.chains import LLMChain
+from langchain_core.runnables import RunnablePassthrough
 import asyncio
 from src.utils.gpt4o_streaming import BaseStreamingLLM
 from src.tools.datetime.time_tool import CurrentTimeTool
@@ -32,15 +32,33 @@ class GPT4OAgent(BaseStreamingLLM):
 
     @lru_cache(maxsize=2)
     def _initialize_chains(self):
-        """Initialize LLM chains with separate callbacks"""
-        self.cot_chain = LLMChain(llm=self.llm, prompt=self.cot_prompt)
-        self.direct_chain = LLMChain(llm=self.llm, prompt=self.direct_prompt)
-        self.final_chain = LLMChain(llm=self.llm, prompt=self.final_prompt)
+        """Initialize runnable sequences"""
+        # Create runnable sequences using the pipe operator
+        self.cot_chain = (
+            RunnablePassthrough() | 
+            self.cot_prompt | 
+            self.llm | 
+            (lambda x: {"text": x.content})
+        )
+
+        self.direct_chain = (
+            RunnablePassthrough() | 
+            self.direct_prompt | 
+            self.llm | 
+            (lambda x: {"text": x.content})
+        )
+
+        self.final_chain = (
+            RunnablePassthrough() | 
+            self.final_prompt | 
+            self.llm | 
+            (lambda x: {"text": x.content})
+        )
 
     async def _reset_callback(self):
         """Reset callback handler"""
         self.callback.done.set()
-        await asyncio.sleep(0.1)  # Small delay to ensure completion
+        await asyncio.sleep(0.1)
         self.callback.done.clear()
         self.callback = AsyncIteratorCallbackHandler()
         self.llm.callbacks = [self.callback]
@@ -54,20 +72,20 @@ class GPT4OAgent(BaseStreamingLLM):
                 content = f"{content}\nContext from search: {web_results}"
 
             if self.reasoning:
-                # Chain of thought reasoning
                 yield "🤔 Reasoning Process:\n\n"
                 
                 # Get reasoning
                 self.callback = AsyncIteratorCallbackHandler()
                 self.llm.callbacks = [self.callback]
                 reasoning_task = asyncio.create_task(
-                    self.cot_chain.arun(question=content)
+                    self.cot_chain.ainvoke({"question": content})
                 )
                 
                 async for token in self.stream_tokens():
                     yield token
                 
                 reasoning_result = await reasoning_task
+                reasoning_text = reasoning_result['text']
                 await self._reset_callback()
                 
                 # Final answer
@@ -75,7 +93,7 @@ class GPT4OAgent(BaseStreamingLLM):
                 
                 # Stream final answer
                 final_task = asyncio.create_task(
-                    self.final_chain.arun(chain_of_thought=reasoning_result)
+                    self.final_chain.ainvoke({"chain_of_thought": reasoning_text})
                 )
                 
                 async for token in self.stream_tokens():
@@ -86,7 +104,7 @@ class GPT4OAgent(BaseStreamingLLM):
             else:
                 # Direct response
                 direct_task = asyncio.create_task(
-                    self.direct_chain.arun(question=content)
+                    self.direct_chain.ainvoke({"question": content})
                 )
                 
                 async for token in self.stream_tokens():

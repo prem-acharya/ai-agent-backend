@@ -15,7 +15,7 @@ class BaseStreamingLLM:
     def _initialize_llm(self) -> AzureChatOpenAI:
         """Initialize Azure ChatOpenAI with cached instance"""
         return AzureChatOpenAI(
-            openai_api_key=os.getenv("OPENAI_API_KEY"),
+            openai_api_key=os.getenv("AZURE_OPENAI_API_KEY"),
             azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
             deployment_name=os.getenv("AZURE_DEPLOYMENT_NAME", "gpt-4o"),
             model_name=os.getenv("AZURE_MODEL_NAME", "gpt-4o"),

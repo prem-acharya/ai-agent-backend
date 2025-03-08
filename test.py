@@ -48,4 +48,4 @@ if __name__ == "__main__":
     message = "What are the latest AI developments?"
     
     # Test with websearch enabled
-    test_chat_endpoint(message, websearch=True, reasoning=True)
+    test_chat_endpoint(message, websearch=False, reasoning=True)
