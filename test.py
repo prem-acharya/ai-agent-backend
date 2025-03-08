@@ -1,12 +1,13 @@
 import json
 import requests
 
-def test_chat_endpoint(message: str, websearch: bool = False):
+def test_chat_endpoint(message: str, websearch: bool = False, reasoning: bool = False):
     url = "http://localhost:8000/api/v1/chat"
     
     data = {
         "content": message,
-        "websearch": websearch
+        "websearch": websearch,
+        "reasoning": reasoning
     }
 
     headers = {
@@ -18,6 +19,7 @@ def test_chat_endpoint(message: str, websearch: bool = False):
         print("\n" + "="*50)
         print(f"🔍 Query: {message}")
         print(f"🌐 Web Search: {'Enabled' if websearch else 'Disabled'}")
+        print(f"🤔 Reasoning: {'Enabled' if reasoning else 'Disabled'}")
         print("="*50 + "\n")
         
         with requests.post(url, data=json.dumps(data), headers=headers, stream=True) as r:
@@ -43,7 +45,7 @@ def test_chat_endpoint(message: str, websearch: bool = False):
 
 if __name__ == "__main__":
     
-    message = "latest bollywood movies and series are released"
+    message = "What are the latest AI developments?"
     
     # Test with websearch enabled
-    test_chat_endpoint(message, websearch=False)
+    test_chat_endpoint(message, websearch=True, reasoning=True)

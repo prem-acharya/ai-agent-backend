@@ -8,11 +8,13 @@ router = APIRouter()
 class ChatRequest(BaseModel):
     content: str
     websearch: Optional[bool] = False
+    reasoning: Optional[bool] = False
 
 @router.post("/chat")
 async def stream_chat(request: ChatRequest):
-    agent = GPT4OAgent()
+    agent = GPT4OAgent(websearch=request.websearch, reasoning=request.reasoning)
     return await agent.process_chat_request(
         content=request.content,
-        websearch=request.websearch
+        websearch=request.websearch,
+        reasoning=request.reasoning
     )

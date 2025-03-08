@@ -1,9 +1,10 @@
-from typing import AsyncIterable, Optional, List
+from typing import AsyncIterable, List
 from langchain.callbacks import AsyncIteratorCallbackHandler
 from langchain_openai import AzureChatOpenAI
 from langchain.schema import BaseMessage
 import os
 from functools import lru_cache
+import asyncio
 
 class BaseStreamingLLM:
     def __init__(self):
@@ -34,7 +35,7 @@ class BaseStreamingLLM:
         except Exception as e:
             yield f"Error: {str(e)}"
         finally:
-            self.callback.done.set()
+            await self.callback.done.wait()
 
     async def generate_streaming_response(
         self, 
@@ -42,9 +43,8 @@ class BaseStreamingLLM:
     ) -> AsyncIterable[str]:
         """Generate streaming response from messages"""
         try:
+            await self.llm.agenerate([messages])
             async for token in self.stream_tokens():
                 yield token
         except Exception as e:
-            yield f"Error: {str(e)}"
-        finally:
-            self.callback.done.set() 
+            yield f"Error: {str(e)}" 
