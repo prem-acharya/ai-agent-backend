@@ -1,22 +1,43 @@
-from dotenv import load_dotenv
-from langchain_openai import AzureChatOpenAI
-from langchain.schema import HumanMessage
-import os
+import json
+import requests
 
-load_dotenv()
+def test_chat_endpoint(message: str, websearch: bool = False):
+    url = "http://localhost:8000/api/v1/chat"
+    
+    data = {
+        "content": message,
+        "websearch": websearch
+    }
 
-from langchain.callbacks.streaming_stdout import StreamingStdOutCallbackHandler
+    headers = {
+        "Content-type": "application/json",
+        "Accept": "text/event-stream"
+    }
 
-chat = AzureChatOpenAI(
-    openai_api_key=os.getenv("OPENAI_API_KEY"),
-    azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
-    deployment_name="gpt-4o",
-    model_name="gpt-4o",
-    api_version="2024-02-15-preview",
-    streaming=True, 
-    callbacks=[StreamingStdOutCallbackHandler()], 
-    temperature=0.7,
-    max_tokens=4096
-)
+    try:
+        with requests.post(url, data=json.dumps(data), headers=headers, stream=True) as r:
+            r.raise_for_status()
+            print("\nResponse streaming:")
+            print("-" * 50)
+            
+            # Process streaming response
+            for chunk in r.iter_content(chunk_size=1024, decode_unicode=True):
+                if chunk:
+                    try:
+                        # Try to decode as JSON if possible
+                        content = chunk.decode('utf-8')
+                        print(content, end='', flush=True)
+                    except Exception:
+                        # If not JSON, print raw content
+                        print(chunk, end='', flush=True)
+            
+            print("\n" + "-" * 50)
 
-print(chat([HumanMessage(content="Write me a song about sparkling water.")]))
+    except requests.exceptions.RequestException as e:
+        print(f"Error: {str(e)}")
+
+if __name__ == "__main__":
+    
+    message = "current time in london"
+    
+    test_chat_endpoint(message, websearch=False)
