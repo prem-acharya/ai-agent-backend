@@ -26,13 +26,14 @@ def initialize_prompts():
     )
 
     final_prompt = PromptTemplate(
-        input_variables=["chain_of_thought"],
+        input_variables=["chain_of_thought", "web_context"],
         template=(
-            "Based on the chain-of-thought reasoning provided below, generate a final, concise, and factually accurate answer in the same language (proper language use) as the user's question. "
-            "Present the final answer in proper markdown format with minimal, relevant emojis to enhance clarity.\n\n"
+            "Based on the following chain-of-thought reasoning and web search context (if provided), "
+            "generate a final, concise, and factually accurate answer in proper markdown format "
             "Use **bold**, *italics*, `inline code`, and other markdown elements correctly.\n\n"
-            "Chain-of-Thought Reasoning:\n"
-            "{chain_of_thought}\n\n"
+            "with relevant emojis.\n\n"
+            "Chain-of-Thought Analysis:\n{chain_of_thought}\n\n"
+            "{web_context}\n\n"
             "Final Answer:"
         )
     )

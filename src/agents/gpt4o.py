@@ -67,14 +67,26 @@ class GPT4OAgent(BaseStreamingLLM):
         """Generate streaming response from the model"""
         try:
             if self.websearch:
+                # First get current time
+                time_tool = CurrentTimeTool()
+                current_time = await time_tool._arun()
+
+                # Then perform web search
+                yield "🌐 Searching the web...\n\n"
                 web_tool = WebSearchTool()
                 web_results = await web_tool._arun(content)
-                content = f"{content}\nContext from search: {web_results}"
+                
+                # Combine context
+                content = f"""
+Current Time: {current_time}
+User Question: {content}
+Web Search Results: {web_results}
+"""
 
             if self.reasoning:
-                yield "🤔 Reasoning Process:\n\n"
+                yield "reasoning:\n\n"
                 
-                # Get reasoning
+                # Get reasoning with enhanced context
                 self.callback = AsyncIteratorCallbackHandler()
                 self.llm.callbacks = [self.callback]
                 reasoning_task = asyncio.create_task(
@@ -88,12 +100,14 @@ class GPT4OAgent(BaseStreamingLLM):
                 reasoning_text = reasoning_result['text']
                 await self._reset_callback()
                 
-                # Final answer
-                yield "\n\n✨ Final Answer:\n\n"
+                # Final answer incorporating all context
+                yield "\n\nFinal Answer based on analysis:\n\n"
                 
-                # Stream final answer
                 final_task = asyncio.create_task(
-                    self.final_chain.ainvoke({"chain_of_thought": reasoning_text})
+                    self.final_chain.ainvoke({
+                        "chain_of_thought": reasoning_text,
+                        "web_context": web_results if self.websearch else ""
+                    })
                 )
                 
                 async for token in self.stream_tokens():
