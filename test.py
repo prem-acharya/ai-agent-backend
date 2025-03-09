@@ -1,11 +1,12 @@
 import json
 import requests
 
-def test_chat_endpoint(message: str, websearch: bool = False, reasoning: bool = False):
+def test_chat_endpoint(message: str, model: str = "gemini", websearch: bool = False, reasoning: bool = False):
     url = "http://localhost:8000/api/v1/chat"
     
     data = {
         "content": message,
+        "model": model,
         "websearch": websearch,
         "reasoning": reasoning
     }
@@ -18,6 +19,7 @@ def test_chat_endpoint(message: str, websearch: bool = False, reasoning: bool = 
     try:
         print("\n" + "="*50)
         print(f"🔍 Query: {message}")
+        print(f"🤖 Model: {model}")
         print(f"🌐 Web Search: {'Enabled' if websearch else 'Disabled'}")
         print(f"🤔 Reasoning: {'Enabled' if reasoning else 'Disabled'}")
         print("="*50 + "\n")
@@ -44,8 +46,9 @@ def test_chat_endpoint(message: str, websearch: bool = False, reasoning: bool = 
         print(f"❌ Error: {str(e)}")
 
 if __name__ == "__main__":
-    
+    # Test message
     message = "What are the latest AI developments?"
     
-    # Test with websearch enabled
-    test_chat_endpoint(message, websearch=False, reasoning=True)
+    # Test with Gemini
+    print("\n========== Test Mode ==========")
+    test_chat_endpoint(message, model="gemini", websearch=False, reasoning=False)
