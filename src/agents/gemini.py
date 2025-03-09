@@ -1,168 +1,144 @@
 import os
 import asyncio
-import nest_asyncio
-from langchain import LLMChain, PromptTemplate
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain.callbacks.streaming_stdout import StreamingStdOutCallbackHandler
-from typing import AsyncGenerator, Dict, Optional
-import json
 from functools import lru_cache
+from typing import AsyncIterable
 import logging
 
-nest_asyncio.apply()
+from fastapi import HTTPException
+from fastapi.responses import StreamingResponse
+
+from langchain.prompts import PromptTemplate
+from langchain.callbacks import AsyncIteratorCallbackHandler
+from langchain.agents import initialize_agent, AgentType
+from langchain_google_genai import ChatGoogleGenerativeAI
+
+from src.tools.datetime.time_tool import CurrentTimeTool
+from src.tools.websearch.websearch_tool import WebSearchTool
+from src.utils.gemini_streaming import BaseGeminiStreaming
+from src.utils.prompts import initialize_prompts
 
 logger = logging.getLogger(__name__)
 
-class GeminiAgent:
-    def __init__(self):
-        api_key = os.getenv("GEMINI_API_KEY")
-        if not api_key:
-            raise ValueError("GEMINI_API_KEY not found in environment variables")
+# Define a custom pass-through class since RunnablePassthrough is not available
+class RunnablePassthrough:
+    def __call__(self, x):
+        return x
 
-        # Cache LLM instance
-        self.llm = self._initialize_llm(api_key)
-        
-        # Initialize prompt templates with caching
-        self._initialize_prompts()
-        
-        # Initialize chains with caching
+class GeminiAgent(BaseGeminiStreaming):
+    """Gemini Agent with token-by-token streaming capabilities and optional web search and reasoning."""
+
+    def __init__(self, websearch: bool = False, reasoning: bool = False):
+        super().__init__()
+        self.websearch = websearch
+        self.reasoning = reasoning
+        # Load prompt templates (chain-of-thought, direct, final)
+        self.cot_prompt, self.direct_prompt, self.final_prompt = initialize_prompts()
         self._initialize_chains()
-
-    @lru_cache(maxsize=1)
-    def _initialize_llm(self, api_key: str) -> ChatGoogleGenerativeAI:
-        return ChatGoogleGenerativeAI(
-            model=os.getenv("GEMINI_MODEL_NAME", "gemini-2.0-flash"),
-            google_api_key=api_key,
-            streaming=True,
-            temperature=0.3,
-            max_output_tokens=4096,
-            top_k=40,
-            top_p=0.9,
-            callbacks=[StreamingStdOutCallbackHandler()]
-        )
-
-    def _initialize_prompts(self):
-        self.cot_prompt = PromptTemplate(
-            input_variables=["question"],
-            template=(
-                "You are a highly advanced reasoning assistant that harnesses the latest capabilities "
-                "from DeepSeek, OpenAI, GPT‑latest, and Glork 2. Please provide your internal chain‑of‑thought "
-                "reasoning for the following question in clear, coherent paragraphs, using the same language as the user's question. "
-                "understand in detail the user's question and provide a detailed and factually accurate answer. "
-                "always make sure Do not include the final answer here—only your internal reasoning.\n\n"
-                "always without bullet points or markdown formatting in internal reasoning"
-                "u can use **bold** and `inline code` to highlight the keywords"
-                "Question: {question}\n\n"
-                "Chain-of-Thought Reasoning (in paragraphs):"
+        if websearch:
+            self.tools = [CurrentTimeTool(), WebSearchTool()]
+            self.agent = initialize_agent(
+                tools=self.tools,
+                llm=self.llm,
+                agent=AgentType.STRUCTURED_CHAT_ZERO_SHOT_REACT_DESCRIPTION,
+                verbose=True
             )
-        )
-
-        self.direct_prompt = PromptTemplate(
-            input_variables=["question"],
-            template=(
-                "Provide a direct, concise answer in proper markdown format with relevant emojis for: {question}\n\n"
-                "Use **bold**, *italics*, `inline code`, and other markdown elements correctly.\n\n"
-                "Answer:"
-            )
-        )
-
-        self.final_prompt = PromptTemplate(
-            input_variables=["chain_of_thought"],
-            template=(
-                "Based on the chain-of-thought reasoning provided below, generate a final, concise, and factually accurate answer in the same language (proper language use) as the user's question. "
-                "Present the final answer in proper markdown format with minimal, relevant emojis to enhance clarity.\n\n"
-                "Use **bold**, *italics*, `inline code`, and other markdown elements correctly.\n\n"
-                "Chain-of-Thought Reasoning:\n"
-                "{chain_of_thought}\n\n"
-                "Final Answer:"
-            )
-        )
 
     @lru_cache(maxsize=2)
     def _initialize_chains(self):
-        self.cot_chain = LLMChain(llm=self.llm, prompt=self.cot_prompt)
-        self.direct_chain = LLMChain(llm=self.llm, prompt=self.direct_prompt)
-        self.final_chain = LLMChain(llm=self.llm, prompt=self.final_prompt)
+        """Initialize chain pipelines using a custom pass-through."""
+        self.cot_chain = (
+            RunnablePassthrough() | 
+            self.cot_prompt | 
+            self.llm | 
+            (lambda x: {"text": x.content})
+        )
+        self.direct_chain = (
+            RunnablePassthrough() | 
+            self.direct_prompt | 
+            self.llm | 
+            (lambda x: {"text": x.content})
+        )
+        self.final_chain = (
+            RunnablePassthrough() | 
+            self.final_prompt | 
+            self.llm | 
+            (lambda x: {"text": x.content})
+        )
 
-    async def run(
-        self, 
-        query: str, 
-        reasoning: bool = False
-    ) -> AsyncGenerator[str, None]:
+    async def _reset_callback(self):
+        """Reset the asynchronous callback handler for fresh streaming."""
+        if not self.llm.callbacks[0].done.is_set():
+            self.llm.callbacks[0].done.set()
+        await asyncio.sleep(0.1)
+
+    async def generate_response(self, content: str) -> AsyncIterable[str]:
+        """Generate a token-by-token streaming response from the model."""
         try:
-            if reasoning:
-                # First, get the reasoning
-                reasoning_text = ""
-                yield json.dumps({
-                    "type": "start",
-                    "mode": "reasoning",
-                    "model": "gemini-2.0-flash"
-                }) + "\n"
-
-                async for chunk in self.cot_chain.astream({"question": query}):
-                    text = chunk.get("text", "") if isinstance(chunk, dict) else str(chunk)
-                    reasoning_text += text
-                    
-                    yield json.dumps({
-                        "type": "content",
-                        "mode": "reasoning",
-                        "text": text,
-                        "model": "gemini-2.0-flash"
-                    }) + "\n"
-
-                yield json.dumps({
-                    "type": "end",
-                    "mode": "reasoning",
-                    "model": "gemini-2.0-flash"
-                }) + "\n"
-
-                # Then, get the final answer
-                yield json.dumps({
-                    "type": "start",
-                    "mode": "answer",
-                    "model": "gemini-2.0-flash"
-                }) + "\n"
-
-                async for chunk in self.final_chain.astream({"chain_of_thought": reasoning_text}):
-                    text = chunk.get("text", "") if isinstance(chunk, dict) else str(chunk)
-                    
-                    yield json.dumps({
-                        "type": "content",
-                        "mode": "answer",
-                        "text": text,
-                    }) + "\n"
-
-                yield json.dumps({
-                    "type": "end",
-                    "mode": "answer",
-                }) + "\n"
-
+            await self._reset_callback()
+            web_results = ""
+            # If web search is enabled, get current time and perform web search.
+            if self.websearch:
+                time_tool = CurrentTimeTool()
+                current_time = await time_tool._arun()
+                logger.info(f"Current Time: {current_time}")
+                yield "Searching on web\n\n"
+                web_tool = WebSearchTool()
+                web_results = await web_tool._arun(content)
+            if self.reasoning:
+                yield "Reasoning start\n\n"
+                await asyncio.sleep(0.1)
+                # Generate chain-of-thought reasoning using the combined question.
+                cot_result = await self.cot_chain.ainvoke({"question": content})
+                yield cot_result["text"]
+                await asyncio.sleep(0.1)
+                await self._reset_callback()
+                yield "\n\nFinal Answer start\n\n"
+                await asyncio.sleep(0.2)
+                final_result = await self.final_chain.ainvoke({
+                    "chain_of_thought": cot_result["text"],
+                    "web_context": web_results
+                })
+                yield final_result["text"]
+                await asyncio.sleep(0.2)
             else:
-                # Direct response without reasoning
-                yield json.dumps({
-                    "type": "start",
-                    "mode": "direct",
-                    "model": "gemini-2.0-flash"
-                }) + "\n"
-
-                async for chunk in self.direct_chain.astream({"question": query}):
-                    text = chunk.get("text", "") if isinstance(chunk, dict) else str(chunk)
-                    
-                    yield json.dumps({
-                        "type": "content",
-                        "mode": "direct",
-                        "text": text,
-                    }) + "\n"
-
-                yield json.dumps({
-                    "type": "end",
-                    "mode": "direct",
-                }) + "\n"
-
+                try:
+                    direct_result = await self.direct_chain.ainvoke({"question": content})
+                    yield direct_result["text"]
+                    await asyncio.sleep(0.2)
+                except Exception as e:
+                    yield f"\nError in direct response: {str(e)}\n"
+                    await asyncio.sleep(0.1)
         except Exception as e:
             logger.error(f"Gemini agent error: {str(e)}")
-            yield json.dumps({
-                "type": "error",
-                "error": str(e),
-                "model": "gemini-2.0-flash"
-            }) + "\n"
+            raise HTTPException(
+                status_code=500,
+                detail=f"Generation error: {str(e)}"
+            )
+        finally:
+            if not self.llm.callbacks[0].done.is_set():
+                self.llm.callbacks[0].done.set()
+
+    async def process_chat_request(
+        self, 
+        content: str, 
+        websearch: bool = False, 
+        reasoning: bool = False
+    ) -> StreamingResponse:
+        """Process a chat request and return a token-by-token streaming response."""
+        try:
+            self.websearch = websearch
+            self.reasoning = reasoning
+            return StreamingResponse(
+                self.generate_response(content),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                }
+            )
+        except Exception as e:
+            logger.error(f"Request processing error: {str(e)}", exc_info=True)
+            raise HTTPException(
+                status_code=500,
+                detail=f"Request processing error: {str(e)}"
+            )
