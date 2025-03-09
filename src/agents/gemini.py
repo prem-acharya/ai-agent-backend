@@ -81,18 +81,18 @@ class GeminiAgent(BaseGeminiStreaming):
                 time_tool = CurrentTimeTool()
                 current_time = await time_tool._arun()
                 logger.info(f"Current Time: {current_time}")
-                yield "🌐 Searching on web...\n\n"
+                yield "Searching on web\n\n"
                 web_tool = WebSearchTool()
                 web_results = await web_tool._arun(content)
             if self.reasoning:
-                yield "Reasoning:\n\n"
+                yield "Reasoning start\n\n"
                 await asyncio.sleep(0.1)
                 # Generate chain-of-thought reasoning using the combined question.
                 cot_result = await self.cot_chain.ainvoke({"question": content})
                 yield cot_result["text"]
                 await asyncio.sleep(0.1)
                 await self._reset_callback()
-                yield "\n\nFinal Answer:\n\n"
+                yield "\n\nFinal Answer start\n\n"
                 await asyncio.sleep(0.2)
                 final_result = await self.final_chain.ainvoke({
                     "chain_of_thought": cot_result["text"],

@@ -72,7 +72,7 @@ class GPT4OAgent(BaseStreamingLLM):
                 current_time = await time_tool._arun()
 
                 # Then perform web search
-                yield "🌐 Searching the web...\n\n"
+                yield "Searching the web\n\n"
                 web_tool = WebSearchTool()
                 web_results = await web_tool._arun(content)
                 
@@ -84,7 +84,7 @@ Web Search Results: {web_results}
 """
 
             if self.reasoning:
-                yield "reasoning:\n\n"
+                yield "reasoning start\n\n"
                 
                 # Get reasoning with enhanced context
                 self.callback = AsyncIteratorCallbackHandler()
@@ -101,7 +101,7 @@ Web Search Results: {web_results}
                 await self._reset_callback()
                 
                 # Final answer incorporating all context
-                yield "\n\nFinal Answer based on analysis:\n\n"
+                yield "\n\nFinal Answer start\n\n"
                 
                 final_task = asyncio.create_task(
                     self.final_chain.ainvoke({
