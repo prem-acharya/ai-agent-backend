@@ -1,133 +1,165 @@
 import os
 import asyncio
-from functools import lru_cache
-from typing import AsyncIterable
+from typing import AsyncIterable, Optional, List, Dict, Any
 import logging
+import json
 
 from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
 
-from langchain.prompts import PromptTemplate
+from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain.callbacks import AsyncIteratorCallbackHandler
 from langchain.agents import initialize_agent, AgentType
 from langchain_google_genai import ChatGoogleGenerativeAI
 
-from src.tools.datetime.time_tool import CurrentTimeTool
-from src.tools.websearch.websearch_tool import WebSearchTool
+from src.tools.google.create_task_tool import CreateTaskTool
+from src.tools.google.get_tasks_tool import GetTasksTool
 from src.utils.gemini_streaming import BaseGeminiStreaming
-from src.utils.prompts import initialize_prompts
 
 logger = logging.getLogger(__name__)
 
-# Define a custom pass-through class since RunnablePassthrough is not available
-class RunnablePassthrough:
-    def __call__(self, x):
-        return x
-
 class GeminiAgent(BaseGeminiStreaming):
-    """Gemini Agent with token-by-token streaming capabilities and optional web search and reasoning."""
+    """Gemini Agent with task management capabilities."""
 
-    def __init__(self, websearch: bool = False, reasoning: bool = False):
+    def __init__(self, google_access_token: Optional[str] = None):
         super().__init__()
-        self.websearch = websearch
-        self.reasoning = reasoning
-        # Load prompt templates (chain-of-thought, direct, final)
-        self.cot_prompt, self.direct_prompt, self.final_prompt = initialize_prompts()
-        self._initialize_chains()
-        if websearch:
-            self.tools = [CurrentTimeTool(), WebSearchTool()]
+        self.google_access_token = google_access_token
+        
+        # Initialize tools
+        self.tools = []
+        
+        # Add task tools if access token is provided
+        if google_access_token:
+            self.tools.extend([
+                CreateTaskTool(google_access_token),
+                GetTasksTool(google_access_token)
+            ])
+            logger.info("Task tools initialized successfully")
+        
+        # Initialize agent if tools are available
+        if self.tools:
+            logger.info(f"Initializing agent with {len(self.tools)} tools")
+            
+            # Create a custom prompt for the agent
+            agent_prompt = ChatPromptTemplate.from_messages([
+                ("system", """You are a helpful AI assistant that manages tasks. When users interact with you:
+
+1. For questions about tasks:
+   - Use the get_tasks tool
+   - Example: {"today_only": true} to get today's tasks
+   - Format the response nicely with emojis and clear status
+
+2. For creating tasks:
+   - Use the create_task tool
+   - Required: title
+   - Optional: due date (today/tomorrow/YYYY-MM-DD), notes
+   - Example: {"title": "Buy groceries", "due": "tomorrow", "notes": "Get milk"}
+   - Confirm task creation with a friendly message
+
+Always use the appropriate tool for task operations. Don't pretend to create or list tasks."""),
+                ("user", "{input}"),
+                MessagesPlaceholder(variable_name="agent_scratchpad"),
+            ])
+            
             self.agent = initialize_agent(
                 tools=self.tools,
                 llm=self.llm,
                 agent=AgentType.STRUCTURED_CHAT_ZERO_SHOT_REACT_DESCRIPTION,
+                agent_kwargs={"prompt": agent_prompt},
                 verbose=True
             )
-
-    @lru_cache(maxsize=2)
-    def _initialize_chains(self):
-        """Initialize chain pipelines using a custom pass-through."""
-        self.cot_chain = (
-            RunnablePassthrough() | 
-            self.cot_prompt | 
-            self.llm | 
-            (lambda x: {"text": x.content})
-        )
-        self.direct_chain = (
-            RunnablePassthrough() | 
-            self.direct_prompt | 
-            self.llm | 
-            (lambda x: {"text": x.content})
-        )
-        self.final_chain = (
-            RunnablePassthrough() | 
-            self.final_prompt | 
-            self.llm | 
-            (lambda x: {"text": x.content})
-        )
-
-    async def _reset_callback(self):
-        """Reset the asynchronous callback handler for fresh streaming."""
-        if not self.llm.callbacks[0].done.is_set():
-            self.llm.callbacks[0].done.set()
-        await asyncio.sleep(0.1)
+            logger.info("Agent initialization complete")
+        else:
+            logger.warning("No tools available for agent")
+    
+    def _extract_task_data_from_response(self, response: str) -> List[Dict[str, Any]]:
+        """Extract task creation data from response text."""
+        tasks = []
+        try:
+            import re
+            json_patterns = [
+                r'```(?:json)?\s*({[^}]+})\s*```',  # JSON in code blocks
+                r'({[\s\S]*?"action"\s*:\s*"create_task"[\s\S]*?})'  # Direct JSON with create_task action
+            ]
+            
+            for pattern in json_patterns:
+                matches = re.findall(pattern, response)
+                for match in matches:
+                    try:
+                        task_data = json.loads(match)
+                        if task_data.get("action") == "create_task":
+                            tasks.append(task_data)
+                    except json.JSONDecodeError:
+                        continue
+            
+            logger.info(f"Found {len(tasks)} task creation objects in response")
+            return tasks
+        except Exception as e:
+            logger.error(f"Error extracting task data: {str(e)}")
+            return []
 
     async def generate_response(self, content: str) -> AsyncIterable[str]:
-        """Generate a token-by-token streaming response from the model."""
+        """Generate a response using the agent."""
         try:
             await self._reset_callback()
-            web_results = ""
-            # If web search is enabled, get current time and perform web search.
-            if self.websearch:
-                time_tool = CurrentTimeTool()
-                current_time = await time_tool._arun()
-                logger.info(f"Current Time: {current_time}")
-                yield "Searching on web\n\n"
-                web_tool = WebSearchTool()
-                web_results = await web_tool._arun(content)
-            if self.reasoning:
-                yield "Reasoning start\n\n"
-                await asyncio.sleep(0.1)
-                # Generate chain-of-thought reasoning using the combined question.
-                cot_result = await self.cot_chain.ainvoke({"question": content})
-                yield cot_result["text"]
-                await asyncio.sleep(0.1)
-                await self._reset_callback()
-                yield "\n\nFinal Answer start\n\n"
-                await asyncio.sleep(0.2)
-                final_result = await self.final_chain.ainvoke({
-                    "chain_of_thought": cot_result["text"],
-                    "web_context": web_results
-                })
-                yield final_result["text"]
-                await asyncio.sleep(0.2)
-            else:
+            collected_response = ""
+            
+            # Check if this is a task-related request
+            if self.google_access_token and any(word in content.lower() for word in ["task", "todo", "reminder"]):
+                logger.info(f"Processing task-related request: {content}")
                 try:
-                    direct_result = await self.direct_chain.ainvoke({"question": content})
-                    yield direct_result["text"]
-                    await asyncio.sleep(0.2)
+                    if self.agent:
+                        agent_response = await self.agent.arun(content)
+                        collected_response = agent_response
+                        
+                        # Try to extract task data from the response
+                        task_objects = self._extract_task_data_from_response(agent_response)
+                        
+                        if task_objects:
+                            results = []
+                            for task_data in task_objects:
+                                try:
+                                    logger.info(f"Creating task: {task_data.get('title')}")
+                                    for tool in self.tools:
+                                        if tool.name == "create_task":
+                                            result_json = await tool._arun(json.dumps(task_data))
+                                            try:
+                                                result_data = json.loads(result_json)
+                                                if result_data.get("success"):
+                                                    task_title = task_data.get("title", "Unknown")
+                                                    results.append(f"✅ I've created the task \"{task_title}\" for you in Google Tasks.")
+                                            except Exception:
+                                                results.append(result_json)
+                                except Exception as e:
+                                    logger.error(f"Error creating task: {str(e)}")
+                            
+                            # Yield original response plus task creation confirmations
+                            if results:
+                                yield f"{collected_response}\n\n{results[0]}"  # Only return the first task confirmation
+                                return
+                            
+                        # If no tasks were created or there was an error
+                        yield collected_response
+                        
+                    else:
+                        yield "⚠️ Task management is not available at the moment."
                 except Exception as e:
-                    yield f"\nError in direct response: {str(e)}\n"
-                    await asyncio.sleep(0.1)
+                    logger.exception(f"Error handling task request: {str(e)}")
+                    yield f"⚠️ I encountered an error while processing your task request: {str(e)}"
+            else:
+                # For non-task queries, use direct response
+                response = await self.llm.agenerate([content])
+                yield response.generations[0][0].text
         except Exception as e:
-            logger.error(f"Gemini agent error: {str(e)}")
-            raise HTTPException(
-                status_code=500,
-                detail=f"Generation error: {str(e)}"
-            )
+            logger.error(f"Error generating response: {str(e)}")
+            raise HTTPException(status_code=500, detail=str(e))
         finally:
             if not self.llm.callbacks[0].done.is_set():
                 self.llm.callbacks[0].done.set()
 
-    async def process_chat_request(
-        self, 
-        content: str, 
-        websearch: bool = False, 
-        reasoning: bool = False
-    ) -> StreamingResponse:
-        """Process a chat request and return a token-by-token streaming response."""
+    async def process_chat_request(self, content: str) -> StreamingResponse:
+        """Process a chat request and return a streaming response."""
         try:
-            self.websearch = websearch
-            self.reasoning = reasoning
             return StreamingResponse(
                 self.generate_response(content),
                 media_type="text/event-stream",
@@ -137,8 +169,5 @@ class GeminiAgent(BaseGeminiStreaming):
                 }
             )
         except Exception as e:
-            logger.error(f"Request processing error: {str(e)}", exc_info=True)
-            raise HTTPException(
-                status_code=500,
-                detail=f"Request processing error: {str(e)}"
-            )
+            logger.error(f"Request processing error: {str(e)}")
+            raise HTTPException(status_code=500, detail=str(e))
