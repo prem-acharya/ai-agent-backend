@@ -85,31 +85,6 @@ class GeminiAgent(BaseGeminiStreaming):
             logger.error(f"Error extracting task data: {str(e)}")
             return []
 
-    def _get_topic_emoji(self, topic: str) -> str:
-        """Get relevant emoji for the topic."""
-        topic_lower = topic.lower()
-        if any(word in topic_lower for word in ["ai", "machine learning", "ml", "artificial intelligence"]):
-            return "🤖"
-        elif any(word in topic_lower for word in ["program", "code", "develop"]):
-            return "💻"
-        elif any(word in topic_lower for word in ["learn", "study", "practice"]):
-            return "📚"
-        elif any(word in topic_lower for word in ["research", "analyze", "investigate"]):
-            return "🔍"
-        elif any(word in topic_lower for word in ["design", "ui", "ux", "interface"]):
-            return "🎨"
-        elif any(word in topic_lower for word in ["plan", "schedule", "organize"]):
-            return "📅"
-        elif any(word in topic_lower for word in ["test", "debug", "fix"]):
-            return "🧪"
-        elif any(word in topic_lower for word in ["document", "write", "note"]):
-            return "📝"
-        elif any(word in topic_lower for word in ["meet", "discuss", "collaborate"]):
-            return "👥"
-        elif any(word in topic_lower for word in ["automate", "automation"]):
-            return "⚙️"
-        return "✅"  # Default emoji
-
     async def generate_response(self, content: str) -> AsyncIterable[str]:
         """Generate a response using the agent."""
         try:
@@ -152,15 +127,85 @@ Web Search Results: {web_results}
                 # Get information response
                 response = await self.llm.agenerate([[HumanMessage(content=info_query)]])
                 info_response = response.generations[0][0].text
-                yield f"📚 Information:\n\n{info_response}\n\n"
+                yield f"Information:\n\n{info_response}\n\n"
                 
-                # Now create the task
-                task_data = {}
+                # Now create the task with AI-generated content
+                task_title = info_query.replace("what is", "").replace("what are", "").strip()
                 
-                # Extract topic for task title
-                topic = info_query.replace("what is", "").replace("what are", "").strip()
-                topic_emoji = self._get_topic_emoji(topic)
-                task_data["title"] = f"{topic_emoji} Learn about {topic.title()}"  # Capitalize the topic
+                # Get task details from AI with emoji suggestion
+                context_prompt = f"""Generate task details in this exact JSON format with appropriate emojis based on the task context:
+{{
+    "title": "Add a relevant emoji at the start + Learn about {task_title}",
+    "notes": [
+        "Add relevant emojis + key learning point 1",
+        "Add relevant emojis + key learning point 2",
+        "Add relevant emojis + key learning point 3",
+        "Add relevant emojis + key learning point 4"
+    ],
+    "time": "Suggest appropriate time in 24-hour format (HH:MM)",
+    "repeat": {{
+        "frequency": "daily/weekly/monthly/yearly (be default daily)",
+        "count": "number of occurrences (be default 1)"
+    }}
+}}
+
+Examples of contextual emojis:
+- For learning/education: 📚 🎓 ✏️
+- For research/discovery: 🔍 📊 🧪
+- For technology/coding: 💻 ⚙️ 🤖
+- For business/planning: 📈 💼 📊
+- For creative/design: 🎨 ✨ 🎯
+- For communication: 💬 🗣️ 📢
+- For important concepts: ⭐ 💡 🔑
+
+Topic to learn: {task_title}"""
+                
+                response = await self.llm.agenerate([[HumanMessage(content=context_prompt)]])
+                try:
+                    # Extract JSON from the response text
+                    import re
+                    json_match = re.search(r'```(?:json)?\s*({[\s\S]+?})\s*```', response.generations[0][0].text)
+                    if json_match:
+                        ai_response = json.loads(json_match.group(1))
+                    else:
+                        ai_response = json.loads(response.generations[0][0].text)
+                    
+                    # Use AI response directly
+                    task_data = {
+                        "title": ai_response["title"],
+                        "notes": "\n".join([f"• {note}" for note in ai_response["notes"]])
+                    }
+                    
+                    # Add time if provided
+                    if "time" in ai_response and ai_response["time"]:
+                        task_data["time"] = ai_response["time"]
+                        
+                    # Add repeat settings if provided
+                    if "repeat" in ai_response and ai_response["repeat"]:
+                        repeat_data = {}
+                        
+                        if "frequency" in ai_response["repeat"] and ai_response["repeat"]["frequency"]:
+                            repeat_data["frequency"] = ai_response["repeat"]["frequency"]
+                            
+                            # Handle count or until
+                            if "count" in ai_response["repeat"] and ai_response["repeat"]["count"]:
+                                try:
+                                    count = int(ai_response["repeat"]["count"])
+                                    if count > 0:
+                                        repeat_data["count"] = count
+                                except (ValueError, TypeError):
+                                    pass
+                                    
+                        if repeat_data:
+                            task_data["repeat"] = repeat_data
+                        
+                except (json.JSONDecodeError, KeyError) as e:
+                    # Fallback if JSON parsing fails
+                    logger.error(f"Error parsing AI response: {str(e)}")
+                    task_data = {
+                        "title": f"Learn about {task_title.title()}",
+                        "notes": info_response
+                    }
                 
                 # Extract due date dynamically from user input
                 content_lower = content.lower()
@@ -192,46 +237,19 @@ Web Search Results: {web_results}
                 
                 task_data["due"] = due_date
                 
-                # Format notes with sorted sections
-                key_points = []
-                action_items = []
-                
-                # Extract key points from info_response
-                for line in info_response.split('\n'):
-                    if line.strip() and not line.startswith('#') and not line.startswith('*'):
-                        key_points.append(line.strip())
-                
-                # Standard action items for learning tasks
-                action_items = [
-                    "Study and understand core concepts",
-                    "Research practical applications",
-                    "Practice with hands-on examples",
-                    "Review and validate understanding",
-                    "Document key learnings and insights"
-                ]
-                
-                # Format notes with emojis and sections
-                task_data["notes"] = (
-                    "🎯 Key Learning Points:\n" + 
-                    "\n".join(f"• {point}" for point in random.sample(key_points, min(len(key_points), 6))) +
-                    "\n\n📝 Action Items:\n" + 
-                    "\n".join(f"• {item}" for item in action_items)
-                )
-                
                 # Create task using the tool
-                if self.google_access_token:
-                    for tool in self.tools:
-                        if tool.name == "create_task":
-                            result_json = await tool._arun(json.dumps(task_data))
-                            try:
-                                result_data = json.loads(result_json)
-                                if result_data.get("success"):
-                                    yield f"\n\n✨ Task created successfully!\n\nDetails:\n```json\n{json.dumps(task_data, indent=2)}\n```"
-                                else:
-                                    yield f"\n\n❌ Failed to create task: {result_data.get('error')}"
-                            except Exception as e:
-                                yield f"\n\n❌ Error processing task creation: {str(e)}"
-                            return
+                for tool in self.tools:
+                    if tool.name == "create_task":
+                        result_json = await tool._arun(json.dumps(task_data))
+                        try:
+                            result_data = json.loads(result_json)
+                            if result_data.get("success"):
+                                yield f"\n\nTask created successfully!\n\nDetails:\n```json\n{json.dumps(task_data, indent=2)}\n```"
+                            else:
+                                yield f"\n\nFailed to create task: {result_data.get('error')}"
+                        except Exception as e:
+                            yield f"\n\nError processing task creation: {str(e)}"
+                        return
             
             # Handle regular task creation
             elif self.google_access_token and any(word in content.lower() for word in ["task", "todo", "reminder", "set"]):
@@ -247,13 +265,43 @@ Web Search Results: {web_results}
                     else:
                         task_title = content_lower.replace("task", "").replace("set", "").strip()
                     
-                    # Get task context from AI
-                    context_prompt = f"""Generate a task details in this exact JSON format:
+                    # Get task context from AI with emoji suggestion
+                    context_prompt = f"""Generate task details in this exact JSON format with appropriate emojis based on the task context:
 {{
-    "title": "A clear, concise title for the task",
-    "notes": ["3-4 bullet points as an array about the task"]
+    "title": "Add a relevant emoji at the start + A clear, concise title",
+    "notes": [
+        "Add relevant emojis + specific action item 1",
+        "Add relevant emojis + specific action item 2",
+        "Add relevant emojis + specific action item 3"
+    ],
+    "time": "Suggest appropriate time in 24-hour format (HH:MM)",
+    "due": "YYYY-MM-DD or today/tomorrow",
+    "attendees": ["List of email addresses for meeting attendees"],
+    "organizer": "Organizer's email address"
 }}
-For this task: {task_title}"""
+
+Note: Only include repeat settings if explicitly mentioned in the task context:
+{{
+    "repeat": {{
+        "frequency": "daily/weekly/monthly/yearly (be default daily)",
+        "count": "number of occurrences (be default 1)"
+    }}
+}}
+
+Examples of contextual emojis:
+- For meetings/discussions: 👥 💬 🤝
+- For coding/development: 💻 👨‍💻 ⚙️
+- For learning/research: 📚 🎓 🔍
+- For planning/organization: 📅 ✅ 📋
+- For review/testing: 🔍 ✔️ 🧪
+- For documentation: 📝 📄 ✍️
+- For deadlines/important: ⏰ ❗ ⚡
+
+Task to create: {task_title}
+Additional context:
+- Meeting attendees: {content.lower().split('guest list:')[1].strip() if 'guest list:' in content.lower() else ''}
+- Organizer: {self.google_access_token}  # We'll get the email from the token
+"""
                     
                     response = await self.llm.agenerate([[HumanMessage(content=context_prompt)]])
                     try:
@@ -265,23 +313,38 @@ For this task: {task_title}"""
                         else:
                             ai_response = json.loads(response.generations[0][0].text)
                         
-                        # Get appropriate emoji based on the AI-generated title
-                        topic_emoji = self._get_topic_emoji(ai_response["title"])
+                        # Use AI response directly without additional formatting
+                        task_data["title"] = ai_response["title"]
+                        task_data["notes"] = "\n".join([f"• {note}" for note in ai_response["notes"]])
                         
-                        # Set task data using AI response
-                        task_data["title"] = f"{topic_emoji} {ai_response['title']}"
-                        
-                        # Format notes as bullet points
-                        if isinstance(ai_response["notes"], list):
-                            task_data["notes"] = "📝 Task Details:\n" + "\n".join(f"• {note}" for note in ai_response["notes"])
-                        else:
-                            task_data["notes"] = f"📝 Task Details:\n• {ai_response['notes']}"
+                        # Add time if provided
+                        if "time" in ai_response and ai_response["time"]:
+                            task_data["time"] = ai_response["time"]
+                            
+                        # Add repeat settings if provided
+                        if "repeat" in ai_response and ai_response["repeat"]:
+                            repeat_data = {}
+                            
+                            if "frequency" in ai_response["repeat"] and ai_response["repeat"]["frequency"]:
+                                repeat_data["frequency"] = ai_response["repeat"]["frequency"]
+                                
+                                # Handle count or until
+                                if "count" in ai_response["repeat"] and ai_response["repeat"]["count"]:
+                                    try:
+                                        count = int(ai_response["repeat"]["count"])
+                                        if count > 0:
+                                            repeat_data["count"] = count
+                                    except (ValueError, TypeError):
+                                        pass
+                                        
+                            if repeat_data:
+                                task_data["repeat"] = repeat_data
                             
                     except (json.JSONDecodeError, KeyError) as e:
                         # Fallback if JSON parsing fails
                         logger.error(f"Error parsing AI response: {str(e)}")
-                        task_data["title"] = f"✅ {task_title.title()}"
-                        task_data["notes"] = f"📝 Task Details:\n• {response.generations[0][0].text}"
+                        task_data["title"] = task_title.title()
+                        task_data["notes"] = response.generations[0][0].text
                     
                     # Extract due date dynamically from user input
                     content_lower = content.lower()
@@ -320,7 +383,7 @@ For this task: {task_title}"""
                             try:
                                 result_data = json.loads(result_json)
                                 if result_data.get("success"):
-                                    yield f"✨ Task created successfully!\n\nDetails:\n```json\n{json.dumps(task_data, indent=2)}\n```"
+                                    yield f"✨ Task created successfully!\n\nDetails:\n\n{json.dumps(task_data, indent=2)}\n"
                                 else:
                                     yield f"❌ Failed to create task: {result_data.get('error')}"
                             except Exception as e:
@@ -347,7 +410,7 @@ For this task: {task_title}"""
                 else:
                     # Direct response
                     response = await self.llm.agenerate([[HumanMessage(content=content)]])
-                    yield response.generations[0][0].text
+                yield response.generations[0][0].text
         except Exception as e:
             logger.error(f"Error generating response: {str(e)}")
             raise HTTPException(status_code=500, detail=str(e))
