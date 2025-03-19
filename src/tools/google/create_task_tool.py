@@ -18,10 +18,12 @@ class CreateTaskTool(BaseTool):
     
     Example: {"title": "Buy groceries", "due": "tomorrow", "notes": "Get milk and eggs"}
     """
+    access_token: str
+    api_url: str = "https://tasks.googleapis.com/tasks/v1"
+    headers: dict = None
     
     def __init__(self, access_token: str):
-        super().__init__()
-        self.access_token = access_token
+        super().__init__(access_token=access_token)
         self.api_url = "https://tasks.googleapis.com/tasks/v1"
         self.headers = {
             "Authorization": f"Bearer {access_token}",
@@ -44,9 +46,13 @@ class CreateTaskTool(BaseTool):
         try:
             # Parse input
             task_data = json.loads(query)
-            title = task_data.get("title")
-            if not title:
-                return "Error: Task title is required"
+            
+            # Validate and set defaults
+            if not task_data.get("title"):
+                return json.dumps({
+                    "success": False,
+                    "error": "Task title is required"
+                })
             
             # Get or create default task list
             lists_response = requests.get(f"{self.api_url}/users/@me/lists", headers=self.headers)
@@ -66,9 +72,16 @@ class CreateTaskTool(BaseTool):
                 task_list_id = task_lists[0]["id"]
             
             # Prepare task data
-            task_body = {"title": title}
+            task_body = {
+                "title": task_data["title"],
+                "status": "needsAction"
+            }
+            
+            # Handle due date
             if "due" in task_data:
                 task_body["due"] = self._format_due_date(task_data["due"])
+            
+            # Handle notes
             if "notes" in task_data:
                 task_body["notes"] = task_data["notes"]
             
@@ -80,12 +93,30 @@ class CreateTaskTool(BaseTool):
             )
             create_response.raise_for_status()
             
+            created_task = create_response.json()
             return json.dumps({
                 "success": True,
-                "message": f"Task '{title}' created successfully",
-                "task": create_response.json()
+                "message": f"Task '{task_data['title']}' created successfully",
+                "task": {
+                    "title": created_task.get("title"),
+                    "due": created_task.get("due"),
+                    "notes": created_task.get("notes"),
+                    "status": created_task.get("status")
+                }
             })
             
+        except json.JSONDecodeError:
+            logger.error("Invalid JSON input")
+            return json.dumps({
+                "success": False,
+                "error": "Invalid task data format"
+            })
+        except requests.exceptions.RequestException as e:
+            logger.error(f"API request error: {str(e)}")
+            return json.dumps({
+                "success": False,
+                "error": f"Failed to communicate with Google Tasks API: {str(e)}"
+            })
         except Exception as e:
             logger.error(f"Error creating task: {str(e)}")
             return json.dumps({

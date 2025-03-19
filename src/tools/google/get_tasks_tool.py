@@ -16,10 +16,12 @@ class GetTasksTool(BaseTool):
     
     Example: {"today_only": true}
     """
+    access_token: str
+    api_url: str = "https://tasks.googleapis.com/tasks/v1"
+    headers: dict = None
     
     def __init__(self, access_token: str):
-        super().__init__()
-        self.access_token = access_token
+        super().__init__(access_token=access_token)
         self.api_url = "https://tasks.googleapis.com/tasks/v1"
         self.headers = {
             "Authorization": f"Bearer {access_token}",
