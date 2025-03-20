@@ -111,7 +111,9 @@ class GeminiAgent(BaseGeminiStreaming):
                             try:
                                 result_data = json.loads(result_json)
                                 if result_data.get("success"):
-                                    yield f"✅ Task/Reminder created successfully!\n\nTask Details:\n```json\n{json.dumps(task_data, indent=2)}\n```"
+                                    notes = task_data.get('notes', 'N/A').replace("\n", "\n\n")
+                                    task_details = f"Title: {task_data.get('title', 'N/A')}\n\nDue: {task_data.get('due', 'N/A')}\n\nNotes: {notes}"
+                                    yield f"Task/Reminder created successfully!\n\n\nTask Details:\n\n\n{task_details}"
                                 else:
                                     yield f"❌ Failed to create task: {result_data.get('error')}"
                             except Exception as e:
@@ -275,7 +277,12 @@ Now analyze this task and provide your response:"""
             
             # Add AI-generated additional notes (limit to 2-5 points)
             if analysis.get("notes"):
-                note_points = analysis["notes"].split("\n")
+                if isinstance(analysis["notes"], str):
+                    note_points = analysis["notes"].split("\n")
+                elif isinstance(analysis["notes"], list):
+                    note_points = analysis["notes"]
+                else:
+                    note_points = []
                 # Take only first 4 points if more exist
                 notes.extend(note_points[:4])
             
@@ -298,7 +305,6 @@ Now analyze this task and provide your response:"""
                     # Add default points if we have less than 2
                     notes.extend([
                         "📌 Priority: Medium",
-                        "💡 Take breaks between reviews"
                     ])
                 elif len(notes) > 5:
                     # Take only first 5 points if we have more
