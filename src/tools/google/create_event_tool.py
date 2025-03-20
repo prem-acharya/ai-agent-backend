@@ -1,9 +1,10 @@
-from typing import Optional, ClassVar
+from typing import Optional, ClassVar, Dict
 import logging
 import requests
 import json
 from langchain.tools import BaseTool
 from datetime import datetime, timedelta
+from pydantic import Field
 
 logger = logging.getLogger(__name__)
 
@@ -32,15 +33,19 @@ class CreateEventTool(BaseTool):
         "attendees": ["user@example.com"]
     }
     """
-    access_token: str
-    calendar_api_url: str = "https://www.googleapis.com/calendar/v3"
+    access_token: str = Field(description="Google Calendar API access token")
+    calendar_api_url: str = Field(default="https://www.googleapis.com/calendar/v3", description="Google Calendar API URL")
+    headers: Dict[str, str] = Field(default_factory=dict, description="Request headers")
     
     def __init__(self, access_token: str):
-        super().__init__(access_token=access_token)
-        self.headers = {
-            "Authorization": f"Bearer {access_token}",
-            "Content-Type": "application/json"
-        }
+        """Initialize the tool with access token"""
+        super().__init__(
+            access_token=access_token,
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Content-Type": "application/json"
+            }
+        )
 
     def _create_calendar_event(self, event_data: dict) -> dict:
         """Create a Calendar event"""

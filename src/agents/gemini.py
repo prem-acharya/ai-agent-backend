@@ -1,4 +1,5 @@
 import os
+import re
 import asyncio
 import random
 from typing import AsyncIterable, Optional, List, Dict, Any
@@ -65,7 +66,6 @@ class GeminiAgent(BaseGeminiStreaming):
         """Extract task creation data from response text."""
         tasks = []
         try:
-            import re
             json_patterns = [
                 r'```(?:json)?\s*({[^}]+})\s*```',  # JSON in code blocks
                 r'({[\s\S]*?"action"\s*:\s*"create_task"[\s\S]*?})'  # Direct JSON with create_task action
@@ -95,69 +95,13 @@ class GeminiAgent(BaseGeminiStreaming):
             # Determine request type based on user intent
             content_lower = content.lower()
             
-            # Check for event/meeting keywords
-            event_keywords = ["meeting", "schedule meeting", "create meeting", "set meeting", 
-                            "event", "create event", "set event", "calendar event"]
-            is_event = any(keyword in content_lower for keyword in event_keywords)
-            
-            # Check for task/reminder keywords
+            # Check for task/reminder keywords first
             task_keywords = ["reminder", "remind me", "create task", "set task", "set reminder", 
                            "create reminder", "todo", "task"]
             is_task = any(keyword in content_lower for keyword in task_keywords)
             
-            # Handle both task and event
-            if is_task and is_event:
-                logger.info("Processing both task and event request")
-                
-                # First create the task
-                task_data = self._prepare_task_data(content)
-                if task_data:
-                    for tool in self.tools:
-                        if tool.name == "create_task":
-                            result_json = await tool._arun(json.dumps(task_data))
-                            try:
-                                result_data = json.loads(result_json)
-                                if result_data.get("success"):
-                                    yield f"✅ Task created successfully!\n\nTask Details:\n```json\n{json.dumps(task_data, indent=2)}\n```\n\n"
-                                else:
-                                    yield f"❌ Failed to create task: {result_data.get('error')}\n\n"
-                            except Exception as e:
-                                yield f"❌ Error processing task creation: {str(e)}\n\n"
-                
-                # Then create the event
-                event_data = self._prepare_event_data(content)
-                if event_data:
-                    for tool in self.tools:
-                        if tool.name == "create_event":
-                            result_json = await tool._arun(json.dumps(event_data))
-                            try:
-                                result_data = json.loads(result_json)
-                                if result_data.get("success"):
-                                    yield f"📅 Meeting/Event created successfully!\n\nEvent Details:\n```json\n{json.dumps(event_data, indent=2)}\n```"
-                                else:
-                                    yield f"❌ Failed to create event: {result_data.get('error')}"
-                            except Exception as e:
-                                yield f"❌ Error processing event creation: {str(e)}"
-            
-            # Handle event/meeting only
-            elif is_event:
-                logger.info("Processing event/meeting request")
-                event_data = self._prepare_event_data(content)
-                if event_data:
-                    for tool in self.tools:
-                        if tool.name == "create_event":
-                            result_json = await tool._arun(json.dumps(event_data))
-                            try:
-                                result_data = json.loads(result_json)
-                                if result_data.get("success"):
-                                    yield f"📅 Meeting/Event created successfully!\n\nEvent Details:\n```json\n{json.dumps(event_data, indent=2)}\n```"
-                                else:
-                                    yield f"❌ Failed to create event: {result_data.get('error')}"
-                            except Exception as e:
-                                yield f"❌ Error processing event creation: {str(e)}"
-            
-            # Handle task/reminder only
-            elif is_task:
+            # If it's a task request, handle it directly without checking for events
+            if is_task:
                 logger.info("Processing task/reminder request")
                 task_data = self._prepare_task_data(content)
                 if task_data:
@@ -172,22 +116,45 @@ class GeminiAgent(BaseGeminiStreaming):
                                     yield f"❌ Failed to create task: {result_data.get('error')}"
                             except Exception as e:
                                 yield f"❌ Error processing task creation: {str(e)}"
+                return
+            
+            # Check for event/meeting keywords
+            event_keywords = ["meeting", "schedule meeting", "create meeting", "set meeting", 
+                            "event", "create event", "set event", "calendar event"]
+            is_event = any(keyword in content_lower for keyword in event_keywords)
+            
+            # Handle event/meeting request
+            if is_event:
+                logger.info("Processing event/meeting request")
+                event_data = self._prepare_event_data(content)
+                if event_data:
+                    for tool in self.tools:
+                        if tool.name == "create_event":
+                            result_json = await tool._arun(json.dumps(event_data))
+                            try:
+                                result_data = json.loads(result_json)
+                                if result_data.get("success"):
+                                    yield f"📅 Meeting/Event created successfully!\n\nEvent Details:\n```json\n{json.dumps(event_data, indent=2)}\n```"
+                                else:
+                                    yield f"❌ Failed to create event: {result_data.get('error')}"
+                            except Exception as e:
+                                yield f"❌ Error processing event creation: {str(e)}"
+                return
             
             # Handle other queries
+            if self.reasoning:
+                yield "reasoning start\n\n"
+                response = await self.llm.agenerate([[HumanMessage(content=f"Think step by step to answer this question: {content}")]])
+                reasoning_text = response.generations[0][0].text
+                yield reasoning_text
+                
+                yield "\n\nFinal Answer start\n\n"
+                summary_prompt = f"Based on the above reasoning, provide a concise final answer to the original question: {content}"
+                response = await self.llm.agenerate([[HumanMessage(content=summary_prompt)]])
+                yield response.generations[0][0].text
             else:
-                if self.reasoning:
-                    yield "reasoning start\n\n"
-                    response = await self.llm.agenerate([[HumanMessage(content=f"Think step by step to answer this question: {content}")]])
-                    reasoning_text = response.generations[0][0].text
-                    yield reasoning_text
-                    
-                    yield "\n\nFinal Answer start\n\n"
-                    summary_prompt = f"Based on the above reasoning, provide a concise final answer to the original question: {content}"
-                    response = await self.llm.agenerate([[HumanMessage(content=summary_prompt)]])
-                    yield response.generations[0][0].text
-                else:
-                    response = await self.llm.agenerate([[HumanMessage(content=content)]])
-                    yield response.generations[0][0].text
+                response = await self.llm.agenerate([[HumanMessage(content=content)]])
+                yield response.generations[0][0].text
         
         except Exception as e:
             logger.error(f"Error generating response: {str(e)}")
@@ -228,7 +195,6 @@ class GeminiAgent(BaseGeminiStreaming):
             task_data["due"] = "today"
         else:
             # Try to find a specific date
-            import re
             from datetime import datetime
             
             date_patterns = [
@@ -300,9 +266,6 @@ class GeminiAgent(BaseGeminiStreaming):
             event_data["due"] = "today"
         else:
             # Try to find a specific date
-            import re
-            from datetime import datetime
-            
             date_patterns = [
                 (r'(\d{2})/(\d{2})(?:/\d{4})?', '%d/%m/%Y'),  # DD/MM or DD/MM/YYYY
                 (r'(\d{2})-(\d{2})(?:-\d{4})?', '%d-%m-%Y'),  # DD-MM or DD-MM-YYYY
@@ -331,18 +294,40 @@ class GeminiAgent(BaseGeminiStreaming):
                         continue
         
         # Extract time range
-        time_range_pattern = r'(\d{1,2})(?::\d{2})?\s*(?:am|pm)\s*to\s*(\d{1,2})(?::\d{2})?\s*(?:am|pm)'
-        if time_match := re.search(time_range_pattern, content_lower):
-            start_hour, end_hour = time_match.groups()
-            
-            # Convert to 24-hour format
-            if "pm" in content_lower.split("to")[0]:
-                start_hour = str(int(start_hour) + 12) if int(start_hour) < 12 else start_hour
-            if "pm" in content_lower.split("to")[1]:
-                end_hour = str(int(end_hour) + 12) if int(end_hour) < 12 else end_hour
-            
-            event_data["start_time"] = f"{int(start_hour):02d}:00"
-            event_data["end_time"] = f"{int(end_hour):02d}:00"
+        time_patterns = [
+            r'(\d{1,2})(?::\d{2})?\s*(?:am|pm)\s*to\s*(\d{1,2})(?::\d{2})?\s*(?:am|pm)',  # 5pm to 6pm
+            r'(\d{1,2}):(\d{2})\s*to\s*(\d{1,2}):(\d{2})',  # 17:00 to 18:00
+            r'from\s*(\d{1,2})(?::\d{2})?\s*(?:am|pm)\s*to\s*(\d{1,2})(?::\d{2})?\s*(?:am|pm)'  # from 5pm to 6pm
+        ]
+        
+        for pattern in time_patterns:
+            if time_match := re.search(pattern, content_lower):
+                if len(time_match.groups()) == 2:  # AM/PM format
+                    start_hour, end_hour = time_match.groups()
+                    
+                    # Convert to 24-hour format
+                    if "pm" in content_lower.split("to")[0].lower():
+                        start_hour = str(int(start_hour) + 12) if int(start_hour) < 12 else start_hour
+                    if "pm" in content_lower.split("to")[1].lower():
+                        end_hour = str(int(end_hour) + 12) if int(end_hour) < 12 else end_hour
+                    
+                    event_data["start_time"] = f"{int(start_hour):02d}:00"
+                    event_data["end_time"] = f"{int(end_hour):02d}:00"
+                elif len(time_match.groups()) == 4:  # 24-hour format
+                    start_hour, start_min, end_hour, end_min = time_match.groups()
+                    event_data["start_time"] = f"{int(start_hour):02d}:{start_min}"
+                    event_data["end_time"] = f"{int(end_hour):02d}:{end_min}"
+                break
+        
+        # If no time range found, try to find single time and set duration to 1 hour
+        if "start_time" not in event_data:
+            single_time_pattern = r'(?:at\s+)?(\d{1,2})(?::\d{2})?\s*(?:am|pm)'
+            if time_match := re.search(single_time_pattern, content_lower):
+                hour = time_match.group(1)
+                if "pm" in time_match.group(0).lower():
+                    hour = str(int(hour) + 12) if int(hour) < 12 else hour
+                event_data["start_time"] = f"{int(hour):02d}:00"
+                event_data["end_time"] = f"{(int(hour) + 1):02d}:00"
         
         # Extract attendees
         if "guest list:" in content_lower:
