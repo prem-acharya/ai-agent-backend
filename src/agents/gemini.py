@@ -103,7 +103,7 @@ class GeminiAgent(BaseGeminiStreaming):
             # If it's a task request, handle it directly without checking for events
             if is_task:
                 logger.info("Processing task/reminder request")
-                task_data = self._prepare_task_data(content)
+                task_data = await self._prepare_task_data(content)
                 if task_data:
                     for tool in self.tools:
                         if tool.name == "create_task":
@@ -163,8 +163,8 @@ class GeminiAgent(BaseGeminiStreaming):
             if hasattr(self.callback, "done") and not self.callback.done.is_set():
                 self.callback.done.set()
 
-    def _prepare_task_data(self, content: str) -> dict:
-        """Prepare task data from user input"""
+    async def _prepare_task_data(self, content: str) -> dict:
+        """Prepare task data from user input using AI analysis"""
         task_data = {}
         content_lower = content.lower()
         
@@ -183,51 +183,171 @@ class GeminiAgent(BaseGeminiStreaming):
             else:
                 task_title = content_lower.replace("reminder", "").replace("task", "").replace("set", "").replace("create", "").strip()
         
-        task_data["title"] = task_title.title()
+        # Clean up title by removing time information
+        time_patterns = [
+            r'\s*at\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)',  # at 2 PM
+            r'\s*\d{1,2}(?::\d{2})?\s*(?:am|pm)',       # 2 PM
+            r'\s*\d{2}:\d{2}'                           # 14:00
+        ]
+        for pattern in time_patterns:
+            task_title = re.sub(pattern, '', task_title, flags=re.IGNORECASE)
         
-        # Extract due date
-        if any(day in content_lower for day in ["tomorrow", "tmr"]):
-            task_data["due"] = "tomorrow"
-        elif "next week" in content_lower:
-            from datetime import datetime, timedelta
-            task_data["due"] = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d")
-        elif "today" in content_lower:
-            task_data["due"] = "today"
-        else:
-            # Try to find a specific date
-            from datetime import datetime
+        # Use Gemini to analyze the task and generate a detailed description
+        analysis_prompt = f"""You are a task analysis AI. Analyze this task request and provide a detailed task description with relevant emojis.
+User Request: {content}
+
+IMPORTANT: Respond ONLY with a valid JSON object in the following format:
+{{
+    "title": "Clear, action-oriented title with relevant emoji (DO NOT include due dates like 'tomorrow' or 'today' in title)",
+    "description": "Detailed description with relevant emojis explaining what needs to be done",
+    "due": "today",
+    "notes": "2-5 concise bullet points with relevant emojis"
+}}
+
+Consider these aspects when generating the response:
+1. Title: Make it clear and actionable with a relevant emoji. NEVER include time words like 'today', 'tomorrow', 'next week' in the title.
+2. Description: Break down the task steps with appropriate emojis
+3. Due Date: Use "today" as default unless a specific date is mentioned in the user request
+4. Notes: Provide 2-5 concise, actionable bullet points with relevant emojis
+
+Example response:
+{{
+    "title": "📋 Comprehensive Document Review",
+    "description": "🔍 Review all documents thoroughly\n📝 Check for completeness and accuracy\n✍️ Note required changes\n✅ Create summary",
+    "due": "today",
+    "notes": "⏰ Estimated: 2-3 hours\n📌 Priority: High\n💡 Start with executive summary"
+}}
+
+Now analyze this task and provide your response:"""
+
+        try:
+            # Get Gemini's analysis using await
+            response = await self.llm.agenerate([[HumanMessage(content=analysis_prompt)]])
+            response_text = response.generations[0][0].text.strip()
             
-            date_patterns = [
-                (r'(\d{2})/(\d{2})(?:/\d{4})?', '%d/%m/%Y'),  # DD/MM or DD/MM/YYYY
-                (r'(\d{2})-(\d{2})(?:-\d{4})?', '%d-%m-%Y'),  # DD-MM or DD-MM-YYYY
-                (r'\d{4}-\d{2}-\d{2}', '%Y-%m-%d'),           # YYYY-MM-DD
-                (r'\d{2}/\d{2}/\d{4}', '%d/%m/%Y')            # DD/MM/YYYY
-            ]
-            
-            for pattern, date_format in date_patterns:
-                if matches := re.search(pattern, content):
+            # Try to extract JSON from the response
+            try:
+                # First try direct JSON parsing
+                analysis = json.loads(response_text)
+            except json.JSONDecodeError:
+                # If that fails, try to find JSON in the text
+                json_match = re.search(r'\{[\s\S]*\}', response_text)
+                if json_match:
                     try:
-                        if len(matches.groups()) == 2:  # DD/MM format without year
-                            day, month = matches.groups()
-                            current_year = datetime.now().year
-                            date_str = f"{day}/{month}/{current_year}"
-                            parsed_date = datetime.strptime(date_str, '%d/%m/%Y')
-                        else:
-                            date_str = matches.group(0)
-                            if len(date_str.split('/')[0]) == 4:  # YYYY/MM/DD format
-                                parsed_date = datetime.strptime(date_str, '%Y/%m/%d')
-                            else:
-                                parsed_date = datetime.strptime(date_str, date_format)
-                        
-                        task_data["due"] = parsed_date.strftime('%Y-%m-%d')
-                        break
-                    except ValueError:
-                        continue
-        
-        # Add notes if available
-        if "notes:" in content_lower:
-            notes = content.split("notes:", 1)[1].strip()
-            task_data["notes"] = notes
+                        analysis = json.loads(json_match.group(0))
+                    except json.JSONDecodeError:
+                        raise ValueError("Could not parse JSON from response")
+                else:
+                    raise ValueError("No JSON found in response")
+            
+            # Validate required fields
+            required_fields = ["title", "description", "due", "notes"]
+            for field in required_fields:
+                if field not in analysis:
+                    raise ValueError(f"Missing required field: {field}")
+            
+            # Use the AI-generated content but clean up the title
+            title = analysis["title"]
+            # Remove any potential due date references from title
+            date_terms = ["today", "tomorrow", "next week", "next month", "next day"]
+            for term in date_terms:
+                title = re.sub(r'\b' + term + r'\b', '', title, flags=re.IGNORECASE)
+            # Cleanup any double spaces created by removals
+            title = re.sub(r'\s+', ' ', title).strip()
+            task_data["title"] = title
+            
+            # Set due date to today by default unless explicitly specified
+            if "tomorrow" in content_lower:
+                task_data["due"] = "tomorrow"
+            elif "next week" in content_lower:
+                task_data["due"] = "next week"
+            elif "next month" in content_lower:
+                task_data["due"] = "next month"
+            else:
+                task_data["due"] = "today"
+            
+            # Combine notes with AI-generated content
+            notes = []
+            
+            # Add AI-generated description as primary note
+            if analysis.get("description"):
+                notes.append(analysis["description"])
+            
+            # Add AI-generated additional notes (limit to 2-5 points)
+            if analysis.get("notes"):
+                note_points = analysis["notes"].split("\n")
+                # Take only first 4 points if more exist
+                notes.extend(note_points[:4])
+            
+            # Add time information if present in user input
+            time_match = re.search(r'(?:at\s+)?(\d{1,2})(?::\d{2})?\s*(?:am|pm)', content_lower)
+            if time_match:
+                hour = time_match.group(1)
+                if "pm" in time_match.group(0).lower():
+                    hour = str(int(hour) + 12) if int(hour) < 12 else hour
+                notes.append(f"⏰ Scheduled for {hour}:00")
+            
+            # Add user's specific notes if provided
+            if "notes:" in content_lower:
+                user_notes = content.split("notes:", 1)[1].strip()
+                notes.append(f"👤 User Notes: {user_notes}")
+            
+            if notes:
+                # Ensure we have at least 2 points and at most 5 points
+                if len(notes) < 2:
+                    # Add default points if we have less than 2
+                    notes.extend([
+                        "📌 Priority: Medium",
+                        "💡 Take breaks between reviews"
+                    ])
+                elif len(notes) > 5:
+                    # Take only first 5 points if we have more
+                    notes = notes[:5]
+                task_data["notes"] = "\n".join(notes)
+            
+        except Exception as e:
+            logger.error(f"Error getting task analysis from Gemini: {str(e)}")
+            # Fallback to basic task data if analysis fails
+            task_title = task_title.strip().title()
+            # Remove any due date terms from title
+            date_terms = ["today", "tomorrow", "next week", "next month", "next day"]
+            for term in date_terms:
+                task_title = re.sub(r'\b' + term + r'\b', '', task_title, flags=re.IGNORECASE)
+            # Cleanup any double spaces created by removals
+            task_title = re.sub(r'\s+', ' ', task_title).strip()
+            task_data["title"] = task_title
+            
+            # Set proper due date based on content
+            if "tomorrow" in content_lower:
+                task_data["due"] = "tomorrow"
+            elif "next week" in content_lower:
+                task_data["due"] = "next week"
+            elif "next month" in content_lower:
+                task_data["due"] = "next month"
+            else:
+                task_data["due"] = "today"  # Default to today
+            
+            # Add basic notes
+            notes = []
+            time_match = re.search(r'(?:at\s+)?(\d{1,2})(?::\d{2})?\s*(?:am|pm)', content_lower)
+            if time_match:
+                hour = time_match.group(1)
+                if "pm" in time_match.group(0).lower():
+                    hour = str(int(hour) + 12) if int(hour) < 12 else hour
+                notes.append(f"⏰ Scheduled for {hour}:00")
+            
+            if "notes:" in content_lower:
+                notes.append(f"👤 User Notes: {content.split('notes:', 1)[1].strip()}")
+            
+            # Ensure we have at least 2 points
+            if len(notes) < 2:
+                notes.extend([
+                    "📌 Priority: Medium",
+                    "💡 Take breaks between reviews"
+                ])
+            
+            if notes:
+                task_data["notes"] = "\n".join(notes[:5])  # Limit to 5 points
         
         return task_data
 
