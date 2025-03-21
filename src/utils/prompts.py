@@ -54,20 +54,20 @@ Your capabilities include:
      ```json
      {
        "title": "Clear, action-oriented title",
-       "due": "today/tomorrow/YYYY-MM-DD",
-       "notes": "Include relevant information from the previous answer + relevant emojis"
+       "due": "today/tomorrow/YYYY-MM-DD/MM-DD-YYYY/DD-MM-YYYY/DD-MM/MM-DD",
+       "notes": "Include 2 to 3 key points from the previous answer + relevant emojis (make sure to not include more than 3 points)"
      }
      ```
    - Title should be clear and actionable
    - Due date defaults to "today" if not specified
-   - Notes should include key points from your answer with relevant emojis
+   - Notes should include 2 to 3 key points from your answer with relevant emojis (make sure to not include more than 3 points)
 
 3. Complex Query Handling 🔄:
    - For queries like "set task `{topic}` ":
      1. First, provide a clear explanation
      2. Then create a task with:
         - Title: include main topic with relevant emoji
-        - Notes: Include key points from your explanation with emojis
+        - Notes: Include 2 to 3 key points from your explanation with emojis (make sure to not include more than 3 points)
         - Due date: As specified or default to "today"
 
 4. Task Viewing 📋:

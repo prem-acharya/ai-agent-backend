@@ -203,14 +203,14 @@ IMPORTANT: Respond ONLY with a valid JSON object in the following format:
     "title": "Clear, action-oriented title with relevant emoji (DO NOT include due dates like 'tomorrow' or 'today' in title)",
     "description": "Detailed description with relevant emojis explaining what needs to be done",
     "due": "today",
-    "notes": "2-5 concise bullet points with relevant emojis"
+    "notes": "2 to 3 concise bullet points with relevant emojis (make sure to not include more than 3 points)"
 }}
 
 Consider these aspects when generating the response:
 1. Title: Make it clear and actionable with a relevant emoji. NEVER include time words like 'today', 'tomorrow', 'next week' in the title.
 2. Description: Break down the task steps with appropriate emojis
 3. Due Date: Use "today" as default unless a specific date is mentioned in the user request
-4. Notes: Provide 2-5 concise, actionable bullet points with relevant emojis
+4. Notes: actionable bullet points with relevant emojis (make sure to not include more than 3 points)
 
 Example response:
 {{
