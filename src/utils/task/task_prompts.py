@@ -8,10 +8,17 @@ def get_task_analysis_prompt() -> str:
 
 User Request: {content}
 
-Respond with a JSON object in this exact format:
+IMPORTANT: For recurring tasks, focus on HOW MANY TIMES the task should repeat. 
+Default to 1 times if not specified.
+
+Respond with a JSON object in this exact format (make sure to include the repeat and time fields):
 {{
     "title": "💧 Daily Water Intake",
-    "due": "today/tomorrow/YYYY-MM-DD/MM-DD-YYYY/DD-MM-YYYY/DD-MM/MM-DD",
+    "due": "today/tomorrow/YYYY-MM-DD",
+    "time": "10:00",
+    "repeat": {{
+        "count": 1
+    }},
     "notes": [
         "🎯 Drink 8 glasses of water daily",
         "⏰ Space out water intake throughout the day",
@@ -22,8 +29,10 @@ Respond with a JSON object in this exact format:
 Remember:
 1. Always use relevant emojis in title and notes
 2. Keep title short and clear
-3. Include exactly 3 notes with emojis (notes related to the task to help the user)
-4. Ensure valid JSON format"""
+3. Include exactly 3 notes with emojis
+4. For recurring tasks, ONLY include the "count" field in the repeat object
+5. ALWAYS include the time field (default: "10:00")
+6. Ensure valid JSON format with all fields"""
 
 def get_task_management_prompt() -> ChatPromptTemplate:
     """Get the prompt template for task management."""
@@ -43,12 +52,16 @@ Your capabilities include:
      {
        "title": "Clear & short, action-oriented title with emoji",
        "due": "today/tomorrow/YYYY-MM-DD/MM-DD-YYYY/DD-MM-YYYY/DD-MM/MM-DD (make sure to include the date, day, month, year in the format of the user request and if the user does not specify a date, use today's date)",
-       "notes": "Include 3 key points with emojis (make sure to not include more than 3 points and notes points related to the task to help the user)"
+       "notes": "Include 3 key points with emojis (make sure to not include more than 3 points and notes points related to the task to help the user)",
+       "recurrence": "["RRULE:FREQ=DAILY;COUNT=1"] (default: RRULE:FREQ=DAILY;COUNT=1)",
+       "time": "Time for the task (optional, format: "HH:MM", default: "10:00") (default: "10:00")"
      }
      ```
    - Title should be clear and actionable with relevant emoji
    - Due date defaults to "today" if not specified (make sure to include the date, day, month, year in the format of the user request and if the user does not specify a date, use today's date)
    - Notes should include exactly 3 key points with emojis (notes related to the task to help the user)
+   - repeat: Repeat settings (optional, format: {"count": number}) (default: count=1)
+   - time: Time for the task (optional, format: "HH:MM", default: "10:00") (default: "10:00")
 
 3. Task Types and Guidelines:
    - Health tasks: Include frequency, benefits, and tips

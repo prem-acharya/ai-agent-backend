@@ -88,11 +88,28 @@ def format_task_details(task_data: Dict[str, Any]) -> str:
     
     # Title with emoji
     if task_data.get("title"):
-        details.append(f"📝 **Task**: {task_data['title']}")
+        title = task_data.get("title", "")
+        # If repeat settings exist, add them to the title display
+        if task_data.get("repeat") and "🔄" not in title:
+            repeat = task_data["repeat"]
+            count = repeat.get("count", 1)
+            details.append(f"📝 **Task**: {title} 🔄 Repeats {count} times")
+        else:
+            details.append(f"📝 **Task**: {title}")
     
     # Due date
     if task_data.get("due"):
         details.append(f"📅 **Due**: {task_data['due']}")
+    
+    # Time
+    if task_data.get("time"):
+        details.append(f"⏰ **Time**: {task_data['time']}")
+    
+    # Repeat settings
+    if task_data.get("repeat"):
+        repeat = task_data["repeat"]
+        count = repeat.get("count", 1)
+        details.append(f"🔄 **Repeats**: {count} times")
     
     # Category and Priority
     if task_data.get("category"):
@@ -157,11 +174,30 @@ def prepare_task_data(content: str, task_analysis: Optional[Dict[str, Any]] = No
     # Get due date
     task_data["due"] = parse_date_from_text(content)
     
-    # Add category, priority, and estimated time if available from AI analysis
-    if task_analysis:
-        for field in ["category", "priority", "estimated_time"]:
-            if task_analysis.get(field):
-                task_data[field] = task_analysis[field]
+    # Get time (default 10:00)
+    task_data["time"] = task_analysis.get("time", "10:00") if task_analysis else "10:00"
+    
+    # Get repeat settings
+    content_lower = content.lower()
+    if "every" in content_lower or "repeat" in content_lower or "recurring" in content_lower:
+        repeat_data = {"count": 1}  # Default to 1 times
+        if task_analysis and task_analysis.get("repeat"):
+            repeat_data = task_analysis["repeat"]
+        else:
+            # Look for count in the text
+            count_patterns = [
+                r'(?:for|count|repeat(?:s|ing)?)\s+(\d+)(?:\s+times)?',
+                r'(\d+)\s+times',
+                r'(\d+)\s+(?:occurrence|iteration)s?'
+            ]
+            
+            for pattern in count_patterns:
+                count_match = re.search(pattern, content_lower)
+                if count_match:
+                    repeat_data["count"] = int(count_match.group(1))
+                    break
+        
+        task_data["repeat"] = repeat_data
     
     # Prepare notes and description
     if task_analysis:
@@ -173,15 +209,20 @@ def prepare_task_data(content: str, task_analysis: Optional[Dict[str, Any]] = No
     else:
         # Fallback to basic notes if no AI analysis
         notes = []
-        start_time, _ = parse_time_range(content)
-        if start_time:
-            notes.append(f"⏰ Scheduled for {start_time}")
+        
+        # Add repeat information to notes if present
+        if task_data.get("repeat"):
+            repeat = task_data["repeat"]
+            notes.append(f"🔄 Repeats every {repeat['interval']} {repeat['unit']}")
+        
+        # Add time information
+        notes.append(f"⏰ Set for {task_data['time']}")
         
         user_notes = extract_notes(content)
         if user_notes:
             notes.append(f"👤 {user_notes}")
         
-        if not notes:
+        if len(notes) < 3:
             notes.extend([
                 "📌 Remember to stay consistent",
                 "💡 Track your progress"

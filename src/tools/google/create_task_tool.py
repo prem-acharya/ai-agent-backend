@@ -1,4 +1,4 @@
-from typing import Optional, ClassVar
+from typing import Optional, ClassVar, Dict, Any
 import logging
 import requests
 import json
@@ -15,11 +15,16 @@ class CreateTaskTool(BaseTool):
     - title: The task title (required)
     - due: Due date (optional, can be "today", "tomorrow", or "YYYY-MM-DD")
     - notes: Additional notes (optional)
+    - repeat: Repeat settings (optional, format: {"count": number})
+    - time: Time for the task (optional, format: "HH:MM", default: "10:00")
     
     Example: {
         "title": "Complete Project Report",
-        "due": "2024-03-19",
-        "notes": "Include all project milestones"
+        "due": "2025-03-21T10:00:00.000Z",
+        "notes": "Include all project milestones",
+        "recurrence": [
+            "RRULE:FREQ=DAILY;COUNT=1"
+        ],
     }
     """
     access_token: str
@@ -34,7 +39,7 @@ class CreateTaskTool(BaseTool):
             "Content-Type": "application/json"
         }
     
-    def _format_due_datetime(self, due: str) -> str:
+    def _format_due_datetime(self, due: str, time: Optional[str] = None) -> str:
         """Format the due date to Google Tasks API format"""
         if due.lower() == "today":
             date = datetime.now()
@@ -44,9 +49,29 @@ class CreateTaskTool(BaseTool):
             try:
                 date = datetime.strptime(due, "%Y-%m-%d")
             except ValueError:
-                return due
+                # Try to return as is if it's already formatted
+                if "T" in due and "Z" in due:
+                    return due
+                return f"{due}T10:00:00.000Z"  # Default time
 
-        return date.strftime("%Y-%m-%dT00:00:00.000Z")
+        # Add time if provided, otherwise use default 10:00 AM
+        time = time or "10:00"
+        try:
+            time_obj = datetime.strptime(time, "%H:%M")
+            date = date.replace(hour=time_obj.hour, minute=time_obj.minute, second=0, microsecond=0)
+        except ValueError:
+            date = date.replace(hour=10, minute=0, second=0, microsecond=0)
+
+        # Format according to RFC 3339 timestamp format required by Google Tasks
+        return f"{date.strftime('%Y-%m-%d')}T{date.strftime('%H:%M')}:00.000Z"
+    
+    def _get_recurrence_string(self, repeat_data: Dict[str, Any]) -> str:
+        """Convert repeat data to Google Tasks recurrence format (RRULE)"""
+        # Always use DAILY frequency with a COUNT
+        count = repeat_data.get("count", 10)  # Default to 10 occurrences if not specified
+        
+        # Create simple RRULE string with COUNT
+        return f"RRULE:FREQ=DAILY;COUNT={count}"
 
     def _run(self, query: str) -> str:
         """Execute the task creation"""
@@ -79,18 +104,51 @@ class CreateTaskTool(BaseTool):
                 task_list_id = task_lists[0]["id"]
             
             # Prepare task data for Google Tasks
+            original_title = task_data["title"]
+            
+            # If repeat settings exist, include them in the title
+            if task_data.get("repeat"):
+                repeat = task_data["repeat"]
+                count = repeat.get("count", 1)
+                task_data["title"] = f"{original_title} 🔄 Repeats {count} times"
+            
+            # Build task body
             task_body = {
                 "title": task_data["title"],
                 "status": "needsAction"
             }
             
-            # Handle due date
+            # Handle due date and time
             if "due" in task_data:
-                task_body["due"] = self._format_due_datetime(task_data["due"])
+                task_body["due"] = self._format_due_datetime(task_data["due"], task_data.get("time"))
             
             # Handle notes
+            notes = []
             if "notes" in task_data:
-                task_body["notes"] = task_data["notes"]
+                notes.append(task_data["notes"])
+            
+            # Handle repeat settings
+            if "repeat" in task_data:
+                # Add recurrence to task
+                repeat_data = task_data["repeat"]
+                recurrence_rule = self._get_recurrence_string(repeat_data)
+                
+                # Google Tasks API expects an array of strings for recurrence
+                task_body["recurrence"] = [recurrence_rule]
+                
+                # Also add to notes for visibility
+                count = repeat_data.get("count", 1)
+                repeat_note = f"🔄 Repeats {count} times"
+                notes.append(repeat_note)
+            
+            # Handle time settings
+            if "time" in task_data:
+                time_note = f"⏰ Set for {task_data['time']}"
+                notes.append(time_note)
+            
+            # Combine all notes
+            if notes:
+                task_body["notes"] = "\n\n".join(notes)
             
             # Create task
             create_response = requests.post(
@@ -104,12 +162,13 @@ class CreateTaskTool(BaseTool):
             
             return json.dumps({
                 "success": True,
-                "message": f"Task '{task_data['title']}' created successfully",
+                "message": f"Task '{original_title}' created successfully",
                 "task": {
                     "title": created_task.get("title"),
                     "due": created_task.get("due"),
                     "notes": created_task.get("notes"),
-                    "status": created_task.get("status")
+                    "status": created_task.get("status"),
+                    "recurrence": created_task.get("recurrence")
                 }
             })
             

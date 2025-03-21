@@ -8,12 +8,15 @@ def parse_date_from_text(content: str) -> str:
     """Parse date from text and return in YYYY-MM-DD format."""
     content_lower = content.lower()
     
+    # Remove recurring patterns to avoid confusion
+    content_clean = re.sub(r'every\s+\d+\s*(?:day|week|month)s?', '', content_lower)
+    
     # Check for relative dates
-    if any(day in content_lower for day in ["tomorrow", "tmr"]):
+    if any(day in content_clean for day in ["tomorrow", "tmr"]):
         return (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
-    elif "next week" in content_lower:
+    elif "next week" in content_clean:
         return (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d")
-    elif "today" in content_lower:
+    elif any(day in content_clean for day in ["today", "now"]):
         return datetime.now().strftime("%Y-%m-%d")
     
     # Try to find a specific date

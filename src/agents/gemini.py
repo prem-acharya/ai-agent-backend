@@ -119,6 +119,20 @@ class GeminiAgent(BaseGeminiStreaming):
                 "notes": "\n".join(task_analysis.get("notes", [])) if isinstance(task_analysis.get("notes"), list) else task_analysis.get("notes", "")
             }
             
+            # Add time settings
+            if task_analysis.get("time"):
+                task_data["time"] = task_analysis["time"]
+            else:
+                task_data["time"] = "10:00"  # Default time
+            
+            # Add repeat settings
+            content_lower = content.lower()
+            if task_analysis.get("repeat") or "every" in content_lower or "repeat" in content_lower or "recurring" in content_lower:
+                repeat_data = {"interval": 1, "unit": "days"}
+                if task_analysis.get("repeat"):
+                    repeat_data = task_analysis["repeat"]
+                task_data["repeat"] = repeat_data
+            
             # Add description to notes if available
             if task_analysis.get("description"):
                 task_data["notes"] = f"{task_analysis['description']}\n\n{task_data['notes']}"
@@ -146,24 +160,26 @@ class GeminiAgent(BaseGeminiStreaming):
             if is_task:
                 logger.info("Processing task/reminder request")
                 task_data = await self._prepare_task_data(content)
+                logger.info(f"Prepared task data: {json.dumps(task_data, indent=2)}")
+                
                 if task_data:
                     for tool in self.tools:
                         if tool.name == "create_task":
                             # First yield the AI-generated task details
-                            yield "Here's how I understand your task:\n\n"
+                            yield "🤖 Here's how I understand your task:\n\n"
                             yield format_task_details(task_data)
-                            yield "\n\n\n⏳ Creating the task..."
+                            yield "\n\n⏳ Creating the task..."
                             
                             # Create the task
                             result_json = await tool._arun(json.dumps(task_data))
                             try:
                                 result_data = json.loads(result_json)
                                 if result_data.get("success"):
-                                    yield "\n\n\n✅ Task created successfully!"
+                                    yield "\n\n✅ Task created successfully!"
                                 else:
-                                    yield f"\n\n\n❌ Failed to create task: {result_data.get('error')}"
+                                    yield f"\n\n❌ Failed to create task: {result_data.get('error')}"
                             except Exception as e:
-                                yield f"\n\n\n❌ Error processing task creation: {str(e)}"
+                                yield f"\n\n❌ Error processing task creation: {str(e)}"
                 return
             
             # Check for event/meeting keywords
