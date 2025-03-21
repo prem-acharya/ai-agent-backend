@@ -89,27 +89,11 @@ def format_task_details(task_data: Dict[str, Any]) -> str:
     # Title with emoji
     if task_data.get("title"):
         title = task_data.get("title", "")
-        # If repeat settings exist, add them to the title display
-        if task_data.get("repeat") and "🔄" not in title:
-            repeat = task_data["repeat"]
-            count = repeat.get("count", 1)
-            details.append(f"📝 **Task**: {title} 🔄 Repeats {count} times")
-        else:
-            details.append(f"📝 **Task**: {title}")
+        details.append(f"📝 **Task**: {title}")
     
     # Due date
     if task_data.get("due"):
         details.append(f"📅 **Due**: {task_data['due']}")
-    
-    # Time
-    if task_data.get("time"):
-        details.append(f"⏰ **Time**: {task_data['time']}")
-    
-    # Repeat settings
-    if task_data.get("repeat"):
-        repeat = task_data["repeat"]
-        count = repeat.get("count", 1)
-        details.append(f"🔄 **Repeats**: {count} times")
     
     # Category and Priority
     if task_data.get("category"):
@@ -140,7 +124,17 @@ def format_task_details(task_data: Dict[str, Any]) -> str:
     
     # Notes
     if task_data.get("notes"):
-        details.append(f"\n📝 **Notes**:\n{task_data['notes']}")
+        # Handle notes with proper line breaks
+        notes = task_data['notes']
+        # Replace any literal \n strings with actual newlines
+        notes = notes.replace('\\n', '\n')
+        details.append(f"\n📝 **Notes**:")
+        
+        # Split notes by newline and add a bullet point to each line
+        note_lines = notes.split('\n')
+        for line in note_lines:
+            if line.strip():  # Only add non-empty lines
+                details.append(f"• {line.strip()}")
     
     # Estimated time
     if task_data.get("estimated_time"):
@@ -174,31 +168,6 @@ def prepare_task_data(content: str, task_analysis: Optional[Dict[str, Any]] = No
     # Get due date
     task_data["due"] = parse_date_from_text(content)
     
-    # Get time (default 10:00)
-    task_data["time"] = task_analysis.get("time", "10:00") if task_analysis else "10:00"
-    
-    # Get repeat settings
-    content_lower = content.lower()
-    if "every" in content_lower or "repeat" in content_lower or "recurring" in content_lower:
-        repeat_data = {"count": 1}  # Default to 1 times
-        if task_analysis and task_analysis.get("repeat"):
-            repeat_data = task_analysis["repeat"]
-        else:
-            # Look for count in the text
-            count_patterns = [
-                r'(?:for|count|repeat(?:s|ing)?)\s+(\d+)(?:\s+times)?',
-                r'(\d+)\s+times',
-                r'(\d+)\s+(?:occurrence|iteration)s?'
-            ]
-            
-            for pattern in count_patterns:
-                count_match = re.search(pattern, content_lower)
-                if count_match:
-                    repeat_data["count"] = int(count_match.group(1))
-                    break
-        
-        task_data["repeat"] = repeat_data
-    
     # Prepare notes and description
     if task_analysis:
         if task_analysis.get("description"):
@@ -209,14 +178,6 @@ def prepare_task_data(content: str, task_analysis: Optional[Dict[str, Any]] = No
     else:
         # Fallback to basic notes if no AI analysis
         notes = []
-        
-        # Add repeat information to notes if present
-        if task_data.get("repeat"):
-            repeat = task_data["repeat"]
-            notes.append(f"🔄 Repeats every {repeat['interval']} {repeat['unit']}")
-        
-        # Add time information
-        notes.append(f"⏰ Set for {task_data['time']}")
         
         user_notes = extract_notes(content)
         if user_notes:

@@ -116,26 +116,20 @@ class GeminiAgent(BaseGeminiStreaming):
             task_data = {
                 "title": task_analysis.get("title", "New Task"),
                 "due": parse_date_from_text(content),
-                "notes": "\n".join(task_analysis.get("notes", [])) if isinstance(task_analysis.get("notes"), list) else task_analysis.get("notes", "")
+                "notes": task_analysis.get("notes", "")
             }
             
-            # Add time settings
-            if task_analysis.get("time"):
-                task_data["time"] = task_analysis["time"]
-            else:
-                task_data["time"] = "10:00"  # Default time
-            
-            # Add repeat settings
-            content_lower = content.lower()
-            if task_analysis.get("repeat") or "every" in content_lower or "repeat" in content_lower or "recurring" in content_lower:
-                repeat_data = {"interval": 1, "unit": "days"}
-                if task_analysis.get("repeat"):
-                    repeat_data = task_analysis["repeat"]
-                task_data["repeat"] = repeat_data
+            # Handle notes based on type (string or list)
+            if isinstance(task_data["notes"], list):
+                # If it's a list, join with proper newlines
+                task_data["notes"] = "\n".join([note.strip() for note in task_data["notes"] if note.strip()])
             
             # Add description to notes if available
             if task_analysis.get("description"):
-                task_data["notes"] = f"{task_analysis['description']}\n\n{task_data['notes']}"
+                if task_data["notes"]:
+                    task_data["notes"] = f"{task_analysis['description']}\n\n{task_data['notes']}"
+                else:
+                    task_data["notes"] = task_analysis['description']
             
             return task_data
             
