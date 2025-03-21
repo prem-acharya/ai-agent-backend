@@ -1,6 +1,12 @@
+"""Prompt templates for various AI interactions."""
+
 from langchain_core.prompts import PromptTemplate
+from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
+
+from src.utils.task.task_prompts import get_task_management_prompt
 
 def initialize_prompts():
+    """Initialize all prompt templates."""
     cot_prompt = PromptTemplate(
         input_variables=["question"],
         template=(
@@ -38,4 +44,6 @@ def initialize_prompts():
         )
     )
 
-    return cot_prompt, direct_prompt, final_prompt 
+    task_management_prompt = get_task_management_prompt()
+
+    return cot_prompt, direct_prompt, final_prompt, task_management_prompt 

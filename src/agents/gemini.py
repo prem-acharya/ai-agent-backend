@@ -1,130 +1,228 @@
 import os
+import re
 import asyncio
-from functools import lru_cache
-from typing import AsyncIterable
+import random
+from typing import AsyncIterable, Optional, List, Dict, Any
 import logging
+import json
 
 from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
 
-from langchain.prompts import PromptTemplate
+from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain.callbacks import AsyncIteratorCallbackHandler
 from langchain.agents import initialize_agent, AgentType
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain.schema import HumanMessage
 
-from src.tools.datetime.time_tool import CurrentTimeTool
-from src.tools.websearch.websearch_tool import WebSearchTool
+from src.tools.google.create_task_tool import CreateTaskTool
+from src.tools.google.create_event_tool import CreateEventTool
+from src.tools.google.get_tasks_tool import GetTasksTool
 from src.utils.gemini_streaming import BaseGeminiStreaming
 from src.utils.prompts import initialize_prompts
+from src.utils.task_utils import prepare_task_data, prepare_event_data, format_task_details
+from src.utils.time_utils import parse_date_from_text
+from src.utils.task.task_prompts import get_task_analysis_prompt
 
 logger = logging.getLogger(__name__)
 
-# Define a custom pass-through class since RunnablePassthrough is not available
-class RunnablePassthrough:
-    def __call__(self, x):
-        return x
-
 class GeminiAgent(BaseGeminiStreaming):
-    """Gemini Agent with token-by-token streaming capabilities and optional web search and reasoning."""
+    """Gemini Agent with task management capabilities."""
 
-    def __init__(self, websearch: bool = False, reasoning: bool = False):
+    def __init__(self, websearch: bool = False, reasoning: bool = False, google_access_token: Optional[str] = None):
         super().__init__()
         self.websearch = websearch
         self.reasoning = reasoning
-        # Load prompt templates (chain-of-thought, direct, final)
-        self.cot_prompt, self.direct_prompt, self.final_prompt = initialize_prompts()
-        self._initialize_chains()
-        if websearch:
-            self.tools = [CurrentTimeTool(), WebSearchTool()]
+        self.google_access_token = google_access_token
+        
+        # Initialize tools
+        self.tools = []
+        
+        # Add task and event tools if access token is provided
+        if google_access_token:
+            self.tools.extend([
+                CreateTaskTool(google_access_token),
+                CreateEventTool(google_access_token),
+                GetTasksTool(google_access_token)
+            ])
+            logger.info("Task and event tools initialized successfully")
+        
+        # Initialize agent if tools are available
+        if self.tools:
+            logger.info(f"Initializing agent with {len(self.tools)} tools")
+            
+            # Get task management prompt
+            _, _, _, task_management_prompt = initialize_prompts()
+            
             self.agent = initialize_agent(
                 tools=self.tools,
                 llm=self.llm,
                 agent=AgentType.STRUCTURED_CHAT_ZERO_SHOT_REACT_DESCRIPTION,
+                agent_kwargs={"prompt": task_management_prompt},
                 verbose=True
             )
+            logger.info("Agent initialization complete")
+        else:
+            logger.warning("No tools available for agent")
+    
+    def _extract_task_data_from_response(self, response: str) -> List[Dict[str, Any]]:
+        """Extract task creation data from response text."""
+        tasks = []
+        try:
+            json_patterns = [
+                r'```(?:json)?\s*({[^}]+})\s*```',  # JSON in code blocks
+                r'({[\s\S]*?"action"\s*:\s*"create_task"[\s\S]*?})'  # Direct JSON with create_task action
+            ]
+            
+            for pattern in json_patterns:
+                matches = re.findall(pattern, response)
+                for match in matches:
+                    try:
+                        task_data = json.loads(match)
+                        if task_data.get("action") == "create_task":
+                            tasks.append(task_data)
+                    except json.JSONDecodeError:
+                        continue
+            
+            logger.info(f"Found {len(tasks)} task creation objects in response")
+            return tasks
+        except Exception as e:
+            logger.error(f"Error extracting task data: {str(e)}")
+            return []
 
-    @lru_cache(maxsize=2)
-    def _initialize_chains(self):
-        """Initialize chain pipelines using a custom pass-through."""
-        self.cot_chain = (
-            RunnablePassthrough() | 
-            self.cot_prompt | 
-            self.llm | 
-            (lambda x: {"text": x.content})
-        )
-        self.direct_chain = (
-            RunnablePassthrough() | 
-            self.direct_prompt | 
-            self.llm | 
-            (lambda x: {"text": x.content})
-        )
-        self.final_chain = (
-            RunnablePassthrough() | 
-            self.final_prompt | 
-            self.llm | 
-            (lambda x: {"text": x.content})
-        )
-
-    async def _reset_callback(self):
-        """Reset the asynchronous callback handler for fresh streaming."""
-        if not self.llm.callbacks[0].done.is_set():
-            self.llm.callbacks[0].done.set()
-        await asyncio.sleep(0.1)
+    async def _prepare_task_data(self, content: str) -> Dict[str, Any]:
+        """Prepare task data from user input using AI analysis."""
+        try:
+            # Get AI analysis of the task
+            analysis_prompt = get_task_analysis_prompt().format(content=content)
+            response = await self.llm.agenerate([[HumanMessage(content=analysis_prompt)]])
+            response_text = response.generations[0][0].text.strip()
+            
+            # Try to extract JSON from the response
+            try:
+                # Clean up the response text to ensure valid JSON
+                json_text = re.search(r'\{[\s\S]*\}', response_text)
+                if json_text:
+                    task_analysis = json.loads(json_text.group(0))
+                else:
+                    logger.error("No JSON found in response")
+                    return prepare_task_data(content)
+                    
+            except json.JSONDecodeError as e:
+                logger.error(f"JSON decode error: {str(e)}")
+                return prepare_task_data(content)
+            
+            # Convert task analysis to task data format
+            task_data = {
+                "title": task_analysis.get("title", "New Task"),
+                "due": parse_date_from_text(content),
+                "notes": task_analysis.get("notes", "")
+            }
+            
+            # Handle notes based on type (string or list)
+            if isinstance(task_data["notes"], list):
+                # If it's a list, join with proper newlines
+                task_data["notes"] = "\n".join([note.strip() for note in task_data["notes"] if note.strip()])
+            
+            # Add description to notes if available
+            if task_analysis.get("description"):
+                if task_data["notes"]:
+                    task_data["notes"] = f"{task_analysis['description']}\n\n{task_data['notes']}"
+                else:
+                    task_data["notes"] = task_analysis['description']
+            
+            return task_data
+            
+        except Exception as e:
+            logger.error(f"Error getting task analysis from Gemini: {str(e)}")
+            return prepare_task_data(content)
 
     async def generate_response(self, content: str) -> AsyncIterable[str]:
-        """Generate a token-by-token streaming response from the model."""
+        """Generate a response using the agent."""
         try:
-            await self._reset_callback()
-            web_results = ""
-            # If web search is enabled, get current time and perform web search.
-            if self.websearch:
-                time_tool = CurrentTimeTool()
-                current_time = await time_tool._arun()
-                logger.info(f"Current Time: {current_time}")
-                yield "Searching on web\n\n"
-                web_tool = WebSearchTool()
-                web_results = await web_tool._arun(content)
+            await self.reset_callback()
+            
+            # Determine request type based on user intent
+            content_lower = content.lower()
+            
+            # Check for task/reminder keywords first
+            task_keywords = ["reminder", "remind me", "create task", "set task", "set reminder", 
+                           "create reminder", "todo", "task"]
+            is_task = any(keyword in content_lower for keyword in task_keywords)
+            
+            # If it's a task request, handle it directly without checking for events
+            if is_task:
+                logger.info("Processing task/reminder request")
+                task_data = await self._prepare_task_data(content)
+                logger.info(f"Prepared task data: {json.dumps(task_data, indent=2)}")
+                
+                if task_data:
+                    for tool in self.tools:
+                        if tool.name == "create_task":
+                            # First yield the AI-generated task details
+                            yield "🤖 Here's how I understand your task:\n\n"
+                            yield format_task_details(task_data)
+                            yield "\n\n⏳ Creating the task..."
+                            
+                            # Create the task
+                            result_json = await tool._arun(json.dumps(task_data))
+                            try:
+                                result_data = json.loads(result_json)
+                                if result_data.get("success"):
+                                    yield "\n\n✅ Task created successfully!"
+                                else:
+                                    yield f"\n\n❌ Failed to create task: {result_data.get('error')}"
+                            except Exception as e:
+                                yield f"\n\n❌ Error processing task creation: {str(e)}"
+                return
+            
+            # Check for event/meeting keywords
+            event_keywords = ["meeting", "schedule meeting", "create meeting", "set meeting", 
+                            "event", "create event", "set event", "calendar event"]
+            is_event = any(keyword in content_lower for keyword in event_keywords)
+            
+            # Handle event/meeting request
+            if is_event:
+                logger.info("Processing event/meeting request")
+                event_data = prepare_event_data(content)
+                if event_data:
+                    for tool in self.tools:
+                        if tool.name == "create_event":
+                            result_json = await tool._arun(json.dumps(event_data))
+                            try:
+                                result_data = json.loads(result_json)
+                                if result_data.get("success"):
+                                    yield f"📅 Meeting/Event created successfully!\n\nEvent Details:\n```json\n{json.dumps(event_data, indent=2)}\n```"
+                                else:
+                                    yield f"❌ Failed to create event: {result_data.get('error')}"
+                            except Exception as e:
+                                yield f"❌ Error processing event creation: {str(e)}"
+                return
+            
+            # Handle other queries
             if self.reasoning:
-                yield "Reasoning start\n\n"
-                await asyncio.sleep(0.1)
-                # Generate chain-of-thought reasoning using the combined question.
-                cot_result = await self.cot_chain.ainvoke({"question": content})
-                yield cot_result["text"]
-                await asyncio.sleep(0.1)
-                await self._reset_callback()
+                yield "reasoning start\n\n"
+                response = await self.llm.agenerate([[HumanMessage(content=f"Think step by step to answer this question: {content}")]])
+                reasoning_text = response.generations[0][0].text
+                yield reasoning_text
+                
                 yield "\n\nFinal Answer start\n\n"
-                await asyncio.sleep(0.2)
-                final_result = await self.final_chain.ainvoke({
-                    "chain_of_thought": cot_result["text"],
-                    "web_context": web_results
-                })
-                yield final_result["text"]
-                await asyncio.sleep(0.2)
+                summary_prompt = f"Based on the above reasoning, provide a concise final answer to the original question: {content}"
+                response = await self.llm.agenerate([[HumanMessage(content=summary_prompt)]])
+                yield response.generations[0][0].text
             else:
-                try:
-                    direct_result = await self.direct_chain.ainvoke({"question": content})
-                    yield direct_result["text"]
-                    await asyncio.sleep(0.2)
-                except Exception as e:
-                    yield f"\nError in direct response: {str(e)}\n"
-                    await asyncio.sleep(0.1)
+                response = await self.llm.agenerate([[HumanMessage(content=content)]])
+                yield response.generations[0][0].text
+        
         except Exception as e:
-            logger.error(f"Gemini agent error: {str(e)}")
-            raise HTTPException(
-                status_code=500,
-                detail=f"Generation error: {str(e)}"
-            )
+            logger.error(f"Error generating response: {str(e)}")
+            raise HTTPException(status_code=500, detail=str(e))
         finally:
-            if not self.llm.callbacks[0].done.is_set():
-                self.llm.callbacks[0].done.set()
+            if hasattr(self.callback, "done") and not self.callback.done.is_set():
+                self.callback.done.set()
 
-    async def process_chat_request(
-        self, 
-        content: str, 
-        websearch: bool = False, 
-        reasoning: bool = False
-    ) -> StreamingResponse:
-        """Process a chat request and return a token-by-token streaming response."""
+    async def process_chat_request(self, content: str, websearch: bool = False, reasoning: bool = False) -> StreamingResponse:
+        """Process a chat request and return a streaming response."""
         try:
             self.websearch = websearch
             self.reasoning = reasoning
@@ -137,8 +235,5 @@ class GeminiAgent(BaseGeminiStreaming):
                 }
             )
         except Exception as e:
-            logger.error(f"Request processing error: {str(e)}", exc_info=True)
-            raise HTTPException(
-                status_code=500,
-                detail=f"Request processing error: {str(e)}"
-            )
+            logger.error(f"Request processing error: {str(e)}")
+            raise HTTPException(status_code=500, detail=str(e))
