@@ -234,16 +234,7 @@ async def prepare_event_data(content: str, llm) -> Dict[str, Any]:
             meeting_type = "Meeting"
             emoji = "📅"  # Default emoji
             
-            if "game" in content.lower():
-                meeting_type = "Game Development"
-                emoji = "🎮"
-            elif "ui" in content.lower() or "design" in content.lower():
-                meeting_type = "UI/UX Design"
-                emoji = "🎨"
-            elif "ai" in content.lower() or "agent" in content.lower():
-                meeting_type = "AI Development"
-                emoji = "🤖"
-            elif "team" in content.lower():
+            if "team" in content.lower():
                 meeting_type = "Team Sync"
                 emoji = "🤝"
             

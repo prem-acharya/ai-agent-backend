@@ -6,6 +6,8 @@ def get_event_analysis_prompt() -> str:
     """Get the prompt for analyzing events/meetings with Gemini."""
     return '''You are an event scheduling AI. Generate a clean JSON object for the following event request.
 Analyze the context carefully and create a detailed, context-aware description.
+DO NOT generate the date in the response - it will be calculated separately.
+Focus on extracting time, attendees, location, and creating a meaningful description.
 
 User Request: {content}
 
@@ -16,7 +18,6 @@ Output a single JSON object like this (no other text, no comments):
     "location": "Google Meet",
     "start_time": "10:00",
     "end_time": "11:00",
-    "due": "2024-03-26",
     "attendees": [
         {{"email": "user1@gmail.com"}},
         {{"email": "user2@gmail.com"}}
@@ -27,7 +28,7 @@ Output a single JSON object like this (no other text, no comments):
         {{"method": "email", "minutes": 60}},
         {{"method": "popup", "minutes": 10}}
     ],
-    "recurrence": ["RRULE:FREQ=WEEKLY"]
+    "recurrence": ["RRULE:FREQ=do not repeat"]
 }}
 
 Important:
@@ -43,9 +44,8 @@ Important:
 5. Structure the description with:
    - Meeting Overview
    - Agenda with specific points
-   - Action Items
-   - Key Focus Areas
-6. Keep all email addresses mentioned in the request'''
+6. Keep all email addresses mentioned in the request
+7. DO NOT generate the date - it will be calculated separately'''
 
 def get_event_management_prompt() -> ChatPromptTemplate:
     """Get the prompt template for event management."""
@@ -86,7 +86,7 @@ Your event scheduling capabilities include:
            "conferenceSolutionKey": {"type": "hangoutsMeet"}
          }
        },
-       "recurrence": ["RRULE:FREQ=DAILY;COUNT=2"],
+       "recurrence": ["RRULE:FREQ=do not repeat;COUNT=0"],
        "reminders": {
          "useDefault": false,
          "overrides": [
