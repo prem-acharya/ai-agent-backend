@@ -5,6 +5,8 @@ import random
 from typing import AsyncIterable, Optional, List, Dict, Any
 import logging
 import json
+import uuid
+from datetime import datetime, timedelta
 
 from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
@@ -20,9 +22,11 @@ from src.tools.google.create_event_tool import CreateEventTool
 from src.tools.google.get_tasks_tool import GetTasksTool
 from src.utils.gemini_streaming import BaseGeminiStreaming
 from src.utils.prompts import initialize_prompts
-from src.utils.task_utils import prepare_task_data, prepare_event_data, format_task_details
-from src.utils.time_utils import parse_date_from_text
-from src.utils.task.task_prompts import get_task_analysis_prompt
+from src.utils.task_utils import prepare_task_data, format_task_details
+from src.utils.event_utils import prepare_event_data, format_event_details
+from src.utils.time_utils import parse_date_from_text, parse_time_range
+from src.utils.prompt.task_prompts import get_task_analysis_prompt
+from src.utils.prompt.event_prompts import get_event_analysis_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -178,25 +182,45 @@ class GeminiAgent(BaseGeminiStreaming):
             
             # Check for event/meeting keywords
             event_keywords = ["meeting", "schedule meeting", "create meeting", "set meeting", 
-                            "event", "create event", "set event", "calendar event"]
+                            "event", "create event", "set event", "calendar event",
+                            "appointment", "schedule", "interview", "call", "conference",
+                            "webinar", "session", "catch up", "sync", "discussion"]
             is_event = any(keyword in content_lower for keyword in event_keywords)
             
             # Handle event/meeting request
             if is_event:
                 logger.info("Processing event/meeting request")
-                event_data = prepare_event_data(content)
+                event_data = await prepare_event_data(content, self.llm)
+                logger.info(f"Prepared event data: {json.dumps(event_data, indent=2)}")
+                
                 if event_data:
                     for tool in self.tools:
                         if tool.name == "create_event":
+                            # First yield the AI-generated event details
+                            yield "🤖 Here's how I understand your event:\n\n"
+                            yield format_event_details(event_data)
+                            yield "\n\n⏳ Creating the event..."
+                            
+                            # Create the event
                             result_json = await tool._arun(json.dumps(event_data))
                             try:
                                 result_data = json.loads(result_json)
                                 if result_data.get("success"):
-                                    yield f"📅 Meeting/Event created successfully!\n\nEvent Details:\n```json\n{json.dumps(event_data, indent=2)}\n```"
+                                    yield "\n\n✅ Event created successfully!"
+                                    
+                                    # Add Google Meet link if available
+                                    if (result_data.get("event") and 
+                                        result_data["event"].get("hangout_link")):
+                                        yield f"\n\n🔗 **Google Meet Link:** {result_data['event']['hangout_link']}"
+                                        
+                                    # Add calendar link
+                                    if (result_data.get("event") and 
+                                        result_data["event"].get("calendar_link")):
+                                        yield f"\n\n📆 **Calendar Link:** {result_data['event']['calendar_link']}"
                                 else:
-                                    yield f"❌ Failed to create event: {result_data.get('error')}"
+                                    yield f"\n\n❌ Failed to create event: {result_data.get('error')}"
                             except Exception as e:
-                                yield f"❌ Error processing event creation: {str(e)}"
+                                yield f"\n\n❌ Error processing event creation: {str(e)}"
                 return
             
             # Handle other queries
