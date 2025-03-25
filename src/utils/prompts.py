@@ -3,7 +3,7 @@
 from langchain_core.prompts import PromptTemplate
 from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
 
-from src.utils.task.task_prompts import get_task_management_prompt
+from src.utils.prompt.task_prompts import get_task_management_prompt
 
 def initialize_prompts():
     """Initialize all prompt templates."""

@@ -3,7 +3,7 @@ import logging
 import requests
 import json
 from langchain.tools import BaseTool
-from datetime import datetime
+from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -13,12 +13,13 @@ class GetTasksTool(BaseTool):
     description: ClassVar[str] = """Gets tasks from Google Tasks.
     Input should be a JSON string with optional fields:
     - today_only: If true, only returns today's tasks (default: false)
+    - tomorrow_only: If true, only returns tomorrow's tasks (default: false)
     
-    Example: {"today_only": true}
+    Example: {"today_only": true} or {"tomorrow_only": true}
     """
     access_token: str
     api_url: str = "https://tasks.googleapis.com/tasks/v1"
-    headers: dict = None
+    headers: Optional[dict] = None
     
     def __init__(self, access_token: str):
         super().__init__(access_token=access_token)
@@ -34,6 +35,7 @@ class GetTasksTool(BaseTool):
             # Parse input
             params = json.loads(query) if query else {}
             today_only = params.get("today_only", False)
+            tomorrow_only = params.get("tomorrow_only", False)
             
             # Get task lists
             lists_response = requests.get(f"{self.api_url}/users/@me/lists", headers=self.headers)
@@ -56,12 +58,19 @@ class GetTasksTool(BaseTool):
             tasks_response.raise_for_status()
             tasks = tasks_response.json().get("items", [])
             
-            # Filter for today's tasks if requested
-            if today_only:
+            # Filter for today's or tomorrow's tasks if requested
+            if today_only or tomorrow_only:
                 today = datetime.now().strftime("%Y-%m-%d")
+                tomorrow = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
+                
+                if today_only:
+                    filter_date = today
+                else:  # tomorrow_only
+                    filter_date = tomorrow
+                
                 tasks = [
                     task for task in tasks 
-                    if task.get("due") and task.get("due").startswith(today)
+                    if task.get("due") and task.get("due").startswith(filter_date)
                 ]
             
             # Format tasks for display

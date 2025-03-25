@@ -2,6 +2,7 @@ from typing import Optional, ClassVar, Dict
 import logging
 import requests
 import json
+import uuid
 from langchain.tools import BaseTool
 from datetime import datetime, timedelta
 from pydantic import Field
@@ -13,24 +14,41 @@ class CreateEventTool(BaseTool):
     name: ClassVar[str] = "create_event"
     description: ClassVar[str] = """Creates a new event/meeting in Google Calendar.
     Input should be a JSON string with required fields:
-    - title: The event title (required)
+    - summary: The event title (required)
+    - description: Event description/details (optional)
+    - location: Physical location or "Google Meet" (optional)
     - start_time: Start time in 24-hour format "HH:MM" (required)
     - end_time: End time in 24-hour format "HH:MM" (required)
     - due: Event date (required, can be "today", "tomorrow", or "YYYY-MM-DD")
     - notes: Additional notes/description (optional)
     - attendees: List of attendee email addresses (optional)
-    - repeat: Repeat settings (optional) with fields:
+    - create_conference: Boolean to create Google Meet (optional, default true for virtual meetings)
+    - reminders: List of reminders with method and minutes (optional)
+    - repeat: Recurrence settings (optional) with fields:
       - frequency: "daily", "weekly", "monthly", or "yearly"
       - count: Number of occurrences (optional)
       - until: End date in "YYYY-MM-DD" format (optional)
+      - byday: Days of week like "MO,TU,WE,TH,FR" (optional)
+      - interval: Interval between occurrences (optional)
     
     Example: {
-        "title": "Team Meeting",
+        "summary": "Team Meeting",
+        "description": "Discuss project progress",
+        "location": "Google Meet",
         "start_time": "14:30",
         "end_time": "15:30",
         "due": "2024-03-19",
-        "notes": "Discuss project progress",
-        "attendees": ["user@example.com"]
+        "attendees": ["user@example.com"],
+        "create_conference": true,
+        "reminders": [
+            {"method": "email", "minutes": 30},
+            {"method": "popup", "minutes": 10}
+        ],
+        "repeat": {
+            "frequency": "do not repeat",
+            "count": 4,
+            "byday": "MO"
+        }
     }
     """
     access_token: str = Field(description="Google Calendar API access token")
@@ -50,24 +68,56 @@ class CreateEventTool(BaseTool):
     def _create_calendar_event(self, event_data: dict) -> dict:
         """Create a Calendar event"""
         try:
-            # Format event data
+            # Format event data with clean summary
+            summary = event_data.get("summary", event_data.get("title", "New Event"))
+            
             event_body = {
-                "summary": event_data["title"],
-                "description": event_data.get("notes", "")
+                "summary": summary,
+                "description": event_data.get("description", event_data.get("notes", "")),
+                "location": event_data.get("location", "Google Meet")
             }
+            
+            # Get user info to set as organizer
+            try:
+                user_info_response = requests.get(
+                    "https://www.googleapis.com/oauth2/v2/userinfo",
+                    headers=self.headers
+                )
+                user_info_response.raise_for_status()
+                user_info = user_info_response.json()
+                
+                # Set creator and organizer
+                event_body["creator"] = {
+                    "email": user_info.get("email"),
+                    "self": True
+                }
+                event_body["organizer"] = event_body["creator"]
+                
+            except Exception as e:
+                logger.error(f"Error getting user info: {str(e)}")
             
             # Add attendees if provided
             if "attendees" in event_data and event_data["attendees"]:
-                event_body["attendees"] = [
-                    {"email": email.strip()} 
-                    for email in event_data["attendees"]
-                ]
+                if isinstance(event_data["attendees"], list):
+                    event_body["attendees"] = []
+                    for attendee in event_data["attendees"]:
+                        if isinstance(attendee, dict) and "email" in attendee:
+                            event_body["attendees"].append({
+                                "email": attendee["email"],
+                                "responseStatus": "needsAction"
+                            })
+                        elif isinstance(attendee, str):
+                            event_body["attendees"].append({
+                                "email": attendee.strip(),
+                                "responseStatus": "needsAction"
+                            })
             
             # Set start and end times
             date_str = event_data.get("due", "today")
-            start_time = event_data.get("start_time", "00:00")
+            start_time = event_data.get("start_time", "09:00")
             end_time = event_data.get("end_time")
             
+            # Parse date
             if date_str.lower() == "today":
                 start_date = datetime.now()
             elif date_str.lower() == "tomorrow":
@@ -78,81 +128,84 @@ class CreateEventTool(BaseTool):
                 except ValueError:
                     start_date = datetime.now()
             
-            # Add start time
+            # Ensure start_date is not in the past
+            now = datetime.now()
+            if start_date.date() < now.date():
+                start_date = now
+            
+            # Parse start time
             try:
                 hours, minutes = map(int, start_time.split(":"))
                 start_date = start_date.replace(hour=hours, minute=minutes, second=0, microsecond=0)
             except (ValueError, TypeError):
-                start_date = start_date.replace(hour=0, minute=0, second=0, microsecond=0)
+                start_date = start_date.replace(hour=9, minute=0, second=0, microsecond=0)
             
             # Set end time
             if end_time:
                 try:
                     end_hours, end_minutes = map(int, end_time.split(":"))
                     end_date = start_date.replace(hour=end_hours, minute=end_minutes)
+                    if end_date < start_date:
+                        end_date = end_date + timedelta(days=1)
                 except (ValueError, TypeError):
                     end_date = start_date + timedelta(hours=1)
             else:
                 end_date = start_date + timedelta(hours=1)
             
-            # Format start and end times
+            # Format datetime strings in ISO format with timezone
             event_body["start"] = {
-                "dateTime": start_date.strftime("%Y-%m-%dT%H:%M:%S"),
-                "timeZone": "Asia/Kolkata"
-            }
-            event_body["end"] = {
-                "dateTime": end_date.strftime("%Y-%m-%dT%H:%M:%S"),
+                "dateTime": start_date.strftime("%Y-%m-%dT%H:%M:%S+05:30"),
                 "timeZone": "Asia/Kolkata"
             }
             
-            # Add recurrence if provided
-            if ("repeat" in event_data and 
-                isinstance(event_data["repeat"], dict) and 
-                event_data["repeat"].get("frequency") and 
-                isinstance(event_data["repeat"]["frequency"], str) and 
-                event_data["repeat"]["frequency"].strip().upper() in ["DAILY", "WEEKLY", "MONTHLY", "YEARLY"]):
-                
-                repeat_data = event_data["repeat"]
-                frequency = repeat_data["frequency"].upper()
-                recurrence = [f"RRULE:FREQ={frequency}"]
-                
-                if repeat_data.get("count") is not None:
-                    try:
-                        count_val = int(repeat_data["count"])
-                        if count_val > 0:
-                            recurrence[0] += f";COUNT={count_val}"
-                    except (ValueError, TypeError):
-                        pass
-                elif repeat_data.get("until"):
-                    try:
-                        until_date = datetime.strptime(repeat_data["until"], "%Y-%m-%d")
-                        recurrence[0] += f";UNTIL={until_date.strftime('%Y%m%dT235959Z')}"
-                    except ValueError:
-                        pass
-                
-                if len(recurrence[0].split(";")) > 1:
-                    event_body["recurrence"] = recurrence
+            event_body["end"] = {
+                "dateTime": end_date.strftime("%Y-%m-%dT%H:%M:%S+05:30"),
+                "timeZone": "Asia/Kolkata"
+            }
+            
+            # Add conferenceData if requested
+            create_conference = event_data.get("create_conference", True)
+            if create_conference and event_data.get("location", "").lower() in ["google meet", "virtual meeting", "online"]:
+                request_id = str(uuid.uuid4())
+                event_body["conferenceData"] = {
+                    "createRequest": {
+                        "requestId": request_id,
+                        "conferenceSolutionKey": {"type": "hangoutsMeet"}
+                    }
+                }
+            
+            # Add reminders
+            event_body["reminders"] = {
+                "useDefault": False,
+                "overrides": [
+                    {"method": "email", "minutes": 1440},
+                    {"method": "email", "minutes": 60},
+                    {"method": "popup", "minutes": 10}
+                ]
+            }
             
             # Create event
             response = requests.post(
-                f"{self.calendar_api_url}/calendars/primary/events",
+                f"{self.calendar_api_url}/calendars/primary/events?conferenceDataVersion=1&sendUpdates=all",
                 headers=self.headers,
                 json=event_body
             )
             response.raise_for_status()
-            event_data = response.json()
+            created_event = response.json()
             
             return {
-                "id": event_data.get("id", ""),
-                "htmlLink": event_data.get("htmlLink", "")
+                "id": created_event.get("id", ""),
+                "htmlLink": created_event.get("htmlLink", ""),
+                "hangoutLink": created_event.get("hangoutLink", "") if create_conference else ""
             }
             
         except requests.exceptions.RequestException as e:
             logger.error(f"Calendar API request error: {str(e)}")
-            return {}
+            logger.error(f"Request body: {json.dumps(event_body, indent=2)}")
+            raise
         except Exception as e:
             logger.error(f"Error creating calendar event: {str(e)}")
-            return {}
+            raise
 
     def _run(self, query: str) -> str:
         """Execute the event creation"""
@@ -161,34 +214,46 @@ class CreateEventTool(BaseTool):
             event_data = json.loads(query)
             
             # Validate required fields
-            if not event_data.get("title"):
+            if not event_data.get("summary") and not event_data.get("title"):
                 return json.dumps({
                     "success": False,
-                    "error": "Event title is required"
-                })
-            
-            if not event_data.get("start_time"):
-                return json.dumps({
-                    "success": False,
-                    "error": "Start time is required for events"
+                    "error": "Event title/summary is required"
                 })
             
             # Create calendar event
             calendar_event = self._create_calendar_event(event_data)
             
             if calendar_event and calendar_event.get("htmlLink"):
-                return json.dumps({
+                # Prepare response with all the details used to create the event
+                title = event_data.get("summary", event_data.get("title", "New Event"))
+                response_data = {
                     "success": True,
-                    "message": f"Event '{event_data['title']}' created successfully",
+                    "message": f"Event '{title}' created successfully",
                     "event": {
-                        "title": event_data["title"],
-                        "start_time": event_data.get("start_time"),
-                        "end_time": event_data.get("end_time"),
-                        "due": event_data.get("due"),
-                        "notes": event_data.get("notes"),
+                        "title": title,
+                        "description": event_data.get("description", event_data.get("notes", "")),
+                        "location": event_data.get("location", ""),
+                        "start_time": event_data.get("start_time", ""),
+                        "end_time": event_data.get("end_time", ""),
+                        "due": event_data.get("due", ""),
+                        "attendees": event_data.get("attendees", []),
                         "calendar_link": calendar_event["htmlLink"]
                     }
-                })
+                }
+                
+                # Add hangout link if available
+                if calendar_event.get("hangoutLink"):
+                    response_data["event"]["hangout_link"] = calendar_event["hangoutLink"]
+                
+                # Add recurrence info if available
+                if "recurrence" in event_data or "repeat" in event_data:
+                    response_data["event"]["recurrence"] = event_data.get("recurrence", None) or event_data.get("repeat", None)
+                
+                # Add reminders if available
+                if "reminders" in event_data:
+                    response_data["event"]["reminders"] = event_data["reminders"]
+                
+                return json.dumps(response_data)
             else:
                 return json.dumps({
                     "success": False,

@@ -28,9 +28,11 @@ async def stream_chat(request: ChatRequest):
     
     try:
         if request.model == "gpt4o":
-            logger.info(f"Initializing GPT4O agent with Google Tasks access: {bool(request.google_access_token)}")
-            agent = GPT4OAgent(websearch=request.websearch, reasoning=request.reasoning, google_access_token=request.google_access_token)
+            # For GPT4O, don't pass the Google access token as it's not currently supported
+            logger.info(f"Initializing GPT4O agent. Note: Google Tasks integration not available for this model.")
+            agent = GPT4OAgent(websearch=request.websearch, reasoning=request.reasoning)
         else:
+            # For Gemini, pass the Google access token as it's supported
             logger.info(f"Initializing Gemini agent with Google Tasks access: {bool(request.google_access_token)}")
             agent = GeminiAgent(websearch=request.websearch, reasoning=request.reasoning, google_access_token=request.google_access_token)
             

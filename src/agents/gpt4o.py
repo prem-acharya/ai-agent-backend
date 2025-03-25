@@ -19,7 +19,14 @@ class GPT4OAgent(BaseStreamingLLM):
         super().__init__()
         self.websearch = websearch
         self.reasoning = reasoning
-        self.cot_prompt, self.direct_prompt, self.final_prompt = initialize_prompts()
+        
+        # Fix the unpacking issue by capturing all returns and only using the first three
+        prompts = initialize_prompts()
+        self.cot_prompt = prompts[0]
+        self.direct_prompt = prompts[1]
+        self.final_prompt = prompts[2]
+        # Ignore the task_management_prompt as it's not needed for GPT4O
+        
         self._initialize_chains()
         if websearch:
             self.tools = [CurrentTimeTool(), WebSearchTool()]
