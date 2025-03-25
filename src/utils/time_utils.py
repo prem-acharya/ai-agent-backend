@@ -84,4 +84,33 @@ def parse_time_range(content: str) -> Tuple[Optional[str], Optional[str]]:
             hour = str(int(hour) + 12) if int(hour) < 12 else hour
         return f"{int(hour):02d}:00", f"{(int(hour) + 1):02d}:00"
     
-    return None, None 
+    return None, None
+
+def format_task_date(date_str: Optional[str]) -> str:
+    """
+    Format an ISO 8601 date string to a more user-friendly format.
+    Converts formats like "2025-03-25T00:00:00.000Z" to "March 25, 2025"
+    
+    Args:
+        date_str: ISO 8601 formatted date string or None
+        
+    Returns:
+        Formatted date string or empty string if input is None
+    """
+    if not date_str:
+        return ""
+        
+    try:
+        # Handle different ISO formats
+        if 'T' in date_str:
+            # Full ISO datetime format
+            date_obj = datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+        else:
+            # Just a date
+            date_obj = datetime.fromisoformat(date_str)
+            
+        # Format the date
+        return date_obj.strftime("%B %d, %Y")
+    except (ValueError, TypeError) as e:
+        # Return original if parsing fails
+        return date_str 

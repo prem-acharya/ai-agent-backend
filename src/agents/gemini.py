@@ -24,7 +24,7 @@ from src.utils.gemini_streaming import BaseGeminiStreaming
 from src.utils.prompts import initialize_prompts
 from src.utils.task_utils import prepare_task_data, format_task_details
 from src.utils.event_utils import prepare_event_data, format_event_details
-from src.utils.time_utils import parse_date_from_text, parse_time_range
+from src.utils.time_utils import parse_date_from_text, parse_time_range, format_task_date
 from src.utils.prompt.task_prompts import get_task_analysis_prompt
 from src.utils.prompt.event_prompts import get_event_analysis_prompt
 
@@ -141,6 +141,42 @@ class GeminiAgent(BaseGeminiStreaming):
             logger.error(f"Error getting task analysis from Gemini: {str(e)}")
             return prepare_task_data(content)
 
+    async def _get_tasks(self, content: str) -> Dict[str, Any]:
+        """Get tasks based on user request."""
+        try:
+            content_lower = content.lower()
+            
+            # Determine time period
+            today_keywords = ["today", "today's", "for today"]
+            tomorrow_keywords = ["tomorrow", "tomorrow's", "for tomorrow"]
+            
+            today_only = any(keyword in content_lower for keyword in today_keywords)
+            tomorrow_only = any(keyword in content_lower for keyword in tomorrow_keywords)
+            
+            # Prepare query for GetTasksTool
+            query = {}
+            
+            if today_only:
+                query["today_only"] = True
+            elif tomorrow_only:
+                query["tomorrow_only"] = True
+                logger.info("Request for tomorrow's tasks detected")
+            else:
+                # Default: get all tasks
+                query["today_only"] = False
+                query["tomorrow_only"] = False
+            
+            # Find and use the GetTasksTool
+            for tool in self.tools:
+                if tool.name == "get_tasks":
+                    result_json = await tool._arun(json.dumps(query))
+                    return json.loads(result_json)
+            
+            return {"success": False, "error": "Task retrieval tool not available"}
+        except Exception as e:
+            logger.error(f"Error getting tasks: {str(e)}")
+            return {"success": False, "error": str(e)}
+
     async def generate_response(self, content: str) -> AsyncIterable[str]:
         """Generate a response using the agent."""
         try:
@@ -149,6 +185,50 @@ class GeminiAgent(BaseGeminiStreaming):
             # Determine request type based on user intent
             content_lower = content.lower()
             
+            # Check for task retrieval request
+            get_task_keywords = ["show tasks", "list out my tasks", "get tasks", "list tasks", "view tasks", "what are my tasks", 
+                               "show my tasks", "display tasks", "check tasks", "list my tasks", "show my tasks", "check my tasks"]
+            
+            # Add keywords for specific time periods
+            time_specific_task_keywords = [
+                "tomorrow's tasks", "tomorrow tasks", "tasks for tomorrow", 
+                "today's tasks", "today tasks", "tasks for today",
+                "upcoming tasks", "next tasks", "show me my"
+            ]
+            
+            # Check if the request is about viewing tasks
+            is_get_tasks = any(keyword in content_lower for keyword in get_task_keywords)
+            is_time_specific_tasks = any(keyword in content_lower for keyword in time_specific_task_keywords)
+            
+            if is_get_tasks or is_time_specific_tasks:
+                logger.info("Processing task retrieval request")
+                tasks_result = await self._get_tasks(content)
+                
+                if tasks_result.get("success"):
+                    yield "📋 Here are your tasks:\n\n"
+                    
+                    if not tasks_result.get("tasks"):
+                        yield "No tasks found for your request. You can create new tasks by saying something like 'create a task to review the project'.\n\n"
+                        return
+                    
+                    yield f"Task List: {tasks_result.get('task_list', 'Default')}\n\n"
+                    
+                    for task in tasks_result.get("tasks", []):
+                        status_emoji = "✅" if task["status"] == "completed" else "⏳"
+                        task_line = f"{status_emoji} {task['title']}"
+                        
+                        if task.get("due"):
+                            formatted_date = format_task_date(task["due"])
+                            task_line += f"\n   📅 Due: {formatted_date}"
+                        
+                        if task.get("notes"):
+                            task_line += f"\n   📝 Notes: {task['notes']}"
+                        
+                        yield f"{task_line}\n\n"
+                else:
+                    yield f"❌ Failed to retrieve tasks: {tasks_result.get('error', 'Unknown error')}"
+                return
+
             # Check for task/reminder keywords first
             task_keywords = ["reminder", "remind me", "create task", "set task", "set reminder", 
                            "create reminder", "todo", "task"]
