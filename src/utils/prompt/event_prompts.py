@@ -5,16 +5,16 @@ from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
 def get_event_analysis_prompt() -> str:
     """Get the prompt for analyzing events/meetings with Gemini."""
     return '''You are an event scheduling AI. Generate a clean JSON object for the following event request.
-Analyze the context carefully and create a detailed, context-aware description.
+Analyze the context carefully and create a concise, relevant description.
 DO NOT generate the date in the response - it will be calculated separately.
-Focus on extracting time, attendees, location, and creating a meaningful description.
+Focus on extracting time, attendees, location, and creating a focused description.
 
 User Request: {content}
 
 Output a single JSON object like this (no other text, no comments):
 {{
-    "summary": "🚨 Error Resolution Meeting",
-    "description": "<b>🚨 Error Resolution Meeting</b><br><br><b>📋 Meeting Overview</b><br><i>Focused discussion to address and resolve critical system errors.</i><br><br><b>🎯 Agenda</b><br><b>🔍 Problem Analysis</b><br>- Review error logs and impact<br>- Identify root causes<br><br><b>💡 Solution Planning</b><br>- <u>Discuss potential fixes</u><br>- <u>Prioritize action items</u><br><br><b>📝 Next Steps</b><br>- Implementation timeline<br>- Testing strategy<br><br><b>🔍 Key Focus Areas</b><br>• Error resolution<br>• System stability<br>• Prevention measures",
+    "summary": "🤝 Team Sync",
+    "description": "<b>🤝 Team Sync</b><br><br><b>📋 Overview</b><br><i>Weekly team sync to discuss project updates and blockers.</i><br><br><b>🎯 Key Points</b><br>• Project updates<br>• Blockers and challenges<br>• Next steps",
     "location": "Google Meet",
     "start_time": "10:00",
     "end_time": "11:00",
@@ -32,18 +32,17 @@ Output a single JSON object like this (no other text, no comments):
 }}
 
 Important:
-1. The description must be relevant to the meeting's purpose and context
-2. Use appropriate emojis based on the meeting type
+1. Keep descriptions short and focused on the meeting's core purpose
+2. Use appropriate emojis that match the meeting type
 3. Include all mentioned attendees
-4. Format description with HTML tags:
-   - <b>Bold</b> for headers and important points
-   - <i>Italics</i> for overview and descriptions
-   - <u>Underline</u> for action items and key tasks
+4. Format description with minimal HTML:
+   - <b>Bold</b> for headers only
+   - <i>Italics</i> for brief overview
    - <br> for line breaks
-   - Bullet points with • or - for lists
-5. Structure the description with:
-   - Meeting Overview
-   - Agenda with specific points
+   - Bullet points with • for key points
+5. Structure the description with just:
+   - Brief overview (1-3 lines)
+   - 3-4 key points maximum (Agenda with specific points)
 6. Keep all email addresses mentioned in the request
 7. DO NOT generate the date - it will be calculated separately'''
 

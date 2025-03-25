@@ -129,11 +129,10 @@ async def prepare_event_data(content: str, llm) -> Dict[str, Any]:
             else:
                 logger.error("No JSON found in response")
                 # Try to get a new analysis with a more specific prompt
-                analysis_prompt = f"""Analyze this event request and generate a detailed JSON response with HTML formatting:
+                analysis_prompt = f"""Analyze this event request and generate a concise JSON response:
                 {content}
                 
-                Focus on creating a detailed description that matches the context of the request.
-                Include all mentioned attendees and ensure proper HTML formatting."""
+                Focus on creating a brief, relevant description that captures the main purpose."""
                 
                 response = await llm.agenerate([[HumanMessage(content=analysis_prompt)]])
                 response_text = response.generations[0][0].text.strip()
@@ -206,7 +205,13 @@ async def prepare_event_data(content: str, llm) -> Dict[str, Any]:
             # Ensure we have a description
             if not event_data.get("description"):
                 # Request a specific description from the AI
-                desc_prompt = f"Generate a detailed HTML-formatted description for this event: {content}"
+                desc_prompt = f"""Generate a brief, focused description for this event:
+                {content}
+                
+                Keep it concise with:
+                1. One to three lines overview
+                2. 2-3 key points maximum (Agenda with specific points)"""
+                
                 desc_response = await llm.agenerate([[HumanMessage(content=desc_prompt)]])
                 desc_text = desc_response.generations[0][0].text.strip()
                 event_data["description"] = desc_text
@@ -230,21 +235,31 @@ async def prepare_event_data(content: str, llm) -> Dict[str, Any]:
             if ("weekly" in content.lower() or "every week" in content.lower()) and not event_data.get("recurrence"):
                 event_data["recurrence"] = ["RRULE:FREQ=WEEKLY"]
         else:
-            # Extract key terms for the summary and set emoji
+            # Extract key terms for the summary
             meeting_type = "Meeting"
             emoji = "📅"  # Default emoji
             
             if "team" in content.lower():
                 meeting_type = "Team Sync"
                 emoji = "🤝"
+            elif "review" in content.lower():
+                meeting_type = "Review"
+                emoji = "📋"
+            
+            # Create a concise description
+            description = f"<b>{emoji} {meeting_type}</b><br><br>"
+            description += f"<i>Brief sync to discuss key points and updates.</i><br><br>"
+            description += "<b>🎯 Key Points</b><br>"
+            description += "• Updates and progress<br>"
+            description += "• Discussion items<br>"
             
             # Fallback to basic event data
             event_data = {
                 "summary": f"{emoji} {meeting_type}",
-                "description": f"<b>{emoji} {meeting_type}</b><br><br><i>Meeting details will be updated shortly.</i>",
+                "description": description,
                 "location": "Google Meet",
                 "start_time": start_time or "10:00",
-                "end_time": end_time or "12:00",
+                "end_time": end_time or "11:00",
                 "due": event_date,
                 "create_conference": True,
                 "attendees": [{"email": email.strip(), "responseStatus": "needsAction", "optional": False} for email in found_emails],
@@ -264,10 +279,10 @@ async def prepare_event_data(content: str, llm) -> Dict[str, Any]:
         # Fallback to basic event data
         return {
             "summary": "📅 New Meeting",
-            "description": "<b>📅 Meeting</b><br><br><i>Meeting details will be updated shortly.</i>",
+            "description": "<b>📅 Meeting</b><br><br><i>Brief sync to discuss updates.</i><br><br><b>🎯 Key Points</b><br>• Updates<br>• Discussion<br>• Next steps",
             "location": "Google Meet",
             "start_time": start_time or "10:00",
-            "end_time": end_time or "12:00",
+            "end_time": end_time or "11:00",
             "due": event_date,
             "create_conference": True,
             "attendees": [{"email": email.strip(), "responseStatus": "needsAction", "optional": False} for email in found_emails],
