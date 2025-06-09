@@ -1,5 +1,7 @@
 # Backend Setup Info
 
+Demo available — see the full walkthrough in the [LinkedIn post.](https://www.linkedin.com/feed/update/urn:li:activity:7332498633633718274/)
+
 ## AI Agent Backend
 
 This backend powers the AI Agent that integrates with **Google Meet**, **Google Tasks**, and other tools to execute using LLMs.
